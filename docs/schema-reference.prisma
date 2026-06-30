@@ -1,0 +1,404 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/** == ENUMS == */
+
+enum ContextScope {
+  PERSONAL
+  ORG
+}
+
+enum MemoryType {
+  NOTE 
+  CHAT_SESSION
+  UPLOAD
+}
+
+enum MemoryArtifactType {
+  DECISION
+  INSIGHT
+  FACT
+  TASK
+  QUESTION
+  CONSTRAINT
+  SUMMARY
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  PAUSED
+  ARCHIVED
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum AgentPrincipal {
+  USER
+  ORG_CONTEXT
+  ORG
+}
+
+enum AttributionType {
+  USER_EXPLICIT
+  AGENT_INFERRED
+  SYSTEM_IMPORT
+}
+
+/** == CORE MODELS == **/
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  password  String
+  createdAt DateTime @default(now())
+
+  memoryEntries   MemoryEntry[]
+  agentProfiles   AgentProfile[]
+  createdContexts Context[]        @relation("CreatedByUser")
+  orgMemberships  OrgMembership[]
+  userProfile     UserProfile?
+}
+
+model UserProfile { 
+  id        String   @id @default(cuid())
+  userId    String   @unique
+
+  preferredTone     String?       
+  verbosity         String?       
+  decisionStyle     String?      
+  defaultCadence    String?     
+  nonNegotiables    String[] @default([])
+  buildPrinciples   String[] @default([])
+  prefs             Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Context {
+  id        String       @id @default(cuid())
+  name      String
+  color     String?
+  scope     ContextScope @default(PERSONAL)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  allowGlobalAI Boolean @default(true)
+
+  // Rich descriptive fields (formerly ContextProfile)
+  seedIntent   String? @db.Text
+  whyItMatters String? @db.Text
+  direction    String? @db.Text
+  summary      String? @db.Text
+  description  String? @db.Text
+
+  themes       String[] @default([])
+  constraints  String[] @default([])
+  assumptions  String[] @default([])
+  values       String[] @default([])
+
+  parentId  String?
+  parent    Context?      @relation("SubContexts", fields: [parentId], references: [id], onDelete: SetNull)
+  children  Context[]     @relation("SubContexts")
+
+  createdByUserId String
+  createdByUser   User          @relation("CreatedByUser", fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  orgId        String?
+  organization Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  memoryEntries   MemoryEntry[]
+  memoryArtifacts MemoryArtifact[]
+  homeForAgents   AgentProfile[]   @relation("AgentHomeContext")
+  agentLinks      AgentContext[]
+  goals           Goal[]
+
+  @@unique([createdByUserId, name])
+  @@index([orgId])
+  @@index([parentId])
+}
+
+model AgentProfile {
+  id            String         @id @default(cuid())
+  principalType AgentPrincipal @default(USER)
+  name               String?  
+  homeContextId String? 
+  homeContext   Context? @relation("AgentHomeContext", fields: [homeContextId], references: [id], onDelete: SetNull)
+
+  contexts AgentContext[] 
+
+  userId    String?
+
+  description        String?  @db.Text
+  directives         String[] @default([])
+  watchWords         String[] @default([])
+  tone               String?
+  detailLevel        Int?
+  formality          Int?
+  followUpQuestions  Boolean?  @default(true)
+  customInstructions String?  @db.Text
+  referenceModels   String?  @db.Text
+  knowledgeDomains  String?  @db.Text
+  priorityResources String?  @db.Text
+
+  createdAt        DateTime @default(now())
+  lastUpdated      DateTime @default(now())
+  interactionCount Int      @default(0)
+
+  user    User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, principalType])
+  @@index([homeContextId])
+}
+
+// AgentContext below is reserved for future multi-user or cross-context sharing scenarios
+// Not needed until contexts are shared between users, or a single agent needs to serve
+// multiple unrelated contexts with per-context overrides
+// Currently all agents are dedicated to one context via homeContextId on AgentProfile
+model AgentContext { 
+  id        String @id @default(cuid())
+  agentId   String
+  contextId String
+
+  toneOverride               String?
+  customInstructionsOverride String? @db.Text
+  directivesOverride         String[] @default([])
+  valuesOverride             String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agent   AgentProfile @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  context Context      @relation(fields: [contextId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, contextId])
+  @@index([contextId])
+  @@index([agentId])
+}
+
+/** ===========================
+    MEMORY ENTRY (RAW INGEST)
+=========================== **/
+
+model MemoryEntry {
+  id        String   @id @default(cuid())
+  userId    String
+  contextId String
+  type      MemoryType @default(NOTE)
+  subtype   String?
+
+  timestamp DateTime @default(now())
+  title     String?
+  content   String   @db.Text
+
+  tags String[] @default([])
+  mood      String?  // useful for UI filtering; NOT using it for memory logic
+
+  chatHistory Json?
+
+  // source normalization (important for multi-source ingestion)
+  sourceType String?   // manual, email, automation, voice, import
+  sourceId   String?   // external system id
+  sourceUri  String?   // link back to original source
+  capturedAt DateTime  @default(now())
+
+  // Vector & scoring
+  contentEmbedding Unsupported("vector(1024)")?
+  importanceScore  Float?   @default(0.5)
+
+  // Operational memory signals (machine-native)
+  accessScore        Float   @default(0.5)
+  consolidationScore Float   @default(0.3)
+  lastActivatedAt    DateTime?
+  activationCount    Int     @default(0)
+  confidence         Float   @default(0.7)
+
+  attributionType AttributionType @default(USER_EXPLICIT)
+  derivedFromId   String?
+  derivedFrom     MemoryEntry?    @relation("Derivation", fields: [derivedFromId], references: [id], onDelete: SetNull)
+  derivations     MemoryEntry[]   @relation("Derivation")
+
+  outgoingLinks MemoryLink[] @relation("LinkSource")
+  incomingLinks MemoryLink[] @relation("LinkTarget")
+  artifactLinks ArtifactSourceLink[] 
+
+
+  viewCount        Int      @default(0)
+  chatInteractions Int      @default(0)
+  lastAccessed     DateTime?
+  deletedAt        DateTime? // soft delete
+  archivedAt       DateTime?
+
+  processingMetadata Json?
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  context Context @relation(fields: [contextId], references: [id], onDelete: Cascade)
+
+  @@index([contextId, type])
+  @@index([contextId, importanceScore, timestamp])
+  @@index([userId, contextId, timestamp])
+  @@index([derivedFromId])
+  @@index([timestamp])
+  @@index([contextId, accessScore]) 
+  @@index([contextId, consolidationScore]) 
+  @@index([lastActivatedAt]) 
+}
+
+
+/** ===========================
+   MEMORY ARTIFACT
+   Derived meaning layer
+=========================== **/
+
+model MemoryArtifact {
+  id        String   @id @default(cuid())
+  contextId String
+
+  type      MemoryArtifactType
+
+  title     String?
+  content   String   @db.Text
+
+  confidence Float   @default(0.7)
+
+  tags String[] @default([])
+
+  // Operational signals (same logic as memory entry)
+  accessScore        Float   @default(0.5)
+  consolidationScore Float   @default(0.3)
+  lastActivatedAt    DateTime?
+  activationCount    Int     @default(0)
+
+  embedding Unsupported("vector(1024)")?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  context Context @relation(fields:[contextId], references:[id], onDelete: Cascade)
+  goalLinks GoalArtifactLink[]
+  sourceLinks ArtifactSourceLink[]
+
+  @@index([contextId])
+  @@index([type])
+  @@index([contextId, accessScore])
+  @@index([contextId, consolidationScore])
+}
+
+model ArtifactSourceLink {
+  artifactId    String
+  memoryEntryId String
+
+  attributionType AttributionType @default(AGENT_INFERRED)
+  rationale       String?
+
+  createdAt DateTime @default(now())
+
+  artifact    MemoryArtifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  memoryEntry MemoryEntry    @relation(fields: [memoryEntryId], references: [id], onDelete: Cascade)
+
+  @@id([artifactId, memoryEntryId])
+  @@index([artifactId])
+  @@index([memoryEntryId])
+}
+
+model MemoryLink {
+  id        String   @id @default(cuid())
+  
+  fromId    String
+  toId      String
+  
+  type      String   @default("related") 
+  attributionType AttributionType @default(AGENT_INFERRED)
+  
+  weight    Float    @default(1.0)
+  rationale String?
+
+  createdAt DateTime @default(now())
+
+  from      MemoryEntry @relation("LinkSource", fields: [fromId], references: [id], onDelete: Cascade)
+  to        MemoryEntry @relation("LinkTarget", fields: [toId], references: [id], onDelete: Cascade)
+
+  @@unique([fromId, toId, type]) 
+  @@index([type]) 
+  @@index([fromId, type])
+  @@index([toId, type])
+}
+
+model Goal {
+  id          String     @id @default(cuid())
+  contextId   String
+  
+  title       String
+  description String?    @db.Text
+  status      GoalStatus @default(ACTIVE)
+  order       Int?
+
+  weight      Float      @default(0.5)
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  context     Context    @relation(fields: [contextId], references: [id], onDelete: Cascade)
+
+  artifactLinks GoalArtifactLink[]
+
+  parentId  String?
+  parent    Goal?   @relation("GoalHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children  Goal[]  @relation("GoalHierarchy")
+
+  @@index([contextId, status])
+}
+
+model GoalArtifactLink {
+  goalId     String
+  artifactId String
+
+  // optional but very useful for “goal health”
+  strength        Float           @default(0.7)
+  rationale       String?
+  attributionType AttributionType @default(AGENT_INFERRED)
+
+  createdAt DateTime @default(now())
+
+  goal     Goal           @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  artifact MemoryArtifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+
+  @@id([goalId, artifactId])
+  @@index([goalId])
+  @@index([artifactId])
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  members  OrgMembership[]
+  contexts Context[]
+}
+
+model OrgMembership {
+  id     String  @id @default(cuid())
+  userId String
+  orgId  String
+  role   OrgRole @default(MEMBER)
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+  @@index([orgId, role])
+}
