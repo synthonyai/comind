@@ -1,11 +1,31 @@
 {
-  "name": "@comind/core",
+  "name": "@synthonyai/comind",
   "version": "0.1.0",
   "description": "A portable cognitive layer for AI agents — intention-driven memory recall, a typed meaning layer (artifacts), provenance, and an inspectable agent runtime. Bring your own store, embeddings, and LLM.",
   "license": "MPL-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/synthonyai/comind.git"
+  },
+  "homepage": "https://github.com/synthonyai/comind#readme",
+  "bugs": {
+    "url": "https://github.com/synthonyai/comind/issues"
+  },
+  "main": "dist/lib/comind/index.js",
+  "types": "dist/lib/comind/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/lib/comind/index.d.ts",
+      "require": "./dist/lib/comind/index.js",
+      "default": "./dist/lib/comind/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
   },
   "keywords": [
     "ai",
@@ -19,6 +39,8 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
+    "prepublishOnly": "npm run build && npm run typecheck && npm run demo:prove && npm run demo:check && npm run characterize",
     "demo:prove": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/proveBoundary.ts",
     "demo:check": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/checkBarrelClean.ts",
     "demo:play": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/play.ts",
@@ -40,6 +62,7 @@
     "@types/node": "^20",
     "chalk": "^4.1.2",
     "ts-node": "^10.9.2",
+    "tsc-alias": "^1.8.17",
     "tsconfig-paths": "^3.15.0",
     "typescript": "^5"
   }

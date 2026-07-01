@@ -72,7 +72,7 @@ You embed CoMind by implementing three providers and passing them to `createComi
 | `LLMProvider` | fill a CoMind-owned schema from a prompt |
 
 ```ts
-import { createComind } from "@comind/core";
+import { createComind } from "@synthonyai/comind";
 
 const comind = createComind({
   userId: "tenant-1",

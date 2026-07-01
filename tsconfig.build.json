@@ -1,0 +1,17 @@
+{
+  "//": "Build config for the published package. Emits CommonJS + .d.ts for the",
+  "//2": "shipped library only (lib/comind). tsc-alias rewrites the @/ path aliases",
+  "//3": "to relative paths afterward so consumers don't need tsconfig-paths.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": ".",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "target": "ES2020"
+  },
+  "include": ["lib/comind/**/*.ts"],
+  "exclude": ["node_modules", "demo", "characterization"]
+}
