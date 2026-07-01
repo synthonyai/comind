@@ -1,5 +1,8 @@
 # CoMind
 
+[![CI](https://github.com/synthonyai/comind/actions/workflows/ci.yml/badge.svg)](https://github.com/synthonyai/comind/actions/workflows/ci.yml)
+[![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](https://www.mozilla.org/en-US/MPL/2.0/)
+
 **A portable cognitive layer for AI agents.** Most "agent memory" is a vector store: it
 embeds text and hands back the nearest neighbours. CoMind is the layer above that — it
 *selects by intent*, *distills raw observations into typed conclusions*, *keeps a paper
