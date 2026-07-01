@@ -24,7 +24,12 @@
     "demo:play": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/play.ts",
     "demo:tui": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/play.ts --tui",
     "demo:step": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/play.ts --tui --step",
-    "demo:repl": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/repl.ts"
+    "demo:repl": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/repl.ts",
+    "characterize": "npm run characterize:activation && npm run characterize:artifact && npm run characterize:runagent && npm run characterize:recall",
+    "characterize:activation": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register characterization/activation-oracle.ts",
+    "characterize:artifact": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register characterization/artifact-oracle.ts",
+    "characterize:runagent": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register characterization/runagent-oracle.ts",
+    "characterize:recall": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register characterization/recall-oracle.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^1.3.23",

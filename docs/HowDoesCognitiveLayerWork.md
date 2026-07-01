@@ -196,7 +196,7 @@ The schema is careful to keep two kinds of fields out of the cognitive logic:
 
 - **App-layer / UI fields** — `mood`, `viewCount`, `chatInteractions`, soft-delete
   (`deletedAt`), `archivedAt`, `processingMetadata`. These exist for the journaling app,
-  not for the memory model. (See the library-boundary rule in `CLAUDE.md`.)
+  not for the memory model — they sit outside the library boundary.
 - **A plain semantic search index.** Similarity is the *entry point* to recall, not the
   whole of it. The operational signals, links, provenance, and goal-weighting are what
   the schema adds on top — and they are the point.

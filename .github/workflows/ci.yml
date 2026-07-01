@@ -28,3 +28,6 @@ jobs:
 
       - name: Barrel is clean
         run: npm run demo:check
+
+      - name: Characterization oracles (cognitive contract)
+        run: npm run characterize
