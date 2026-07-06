@@ -13,6 +13,10 @@
 export { createComind } from "@/lib/comind/createComind";
 export type { Comind, CreateComindConfig } from "@/lib/comind/createComind";
 
+// --- Recall result shapes returned by the standalone `recall()` verb: raw
+//     entries and derived artifacts, each carrying its `intention` score. ---
+export type { RecalledEntry, RecalledArtifact } from "@/lib/comind/contextRecall";
+
 // --- Provider interfaces (implement these to plug in a custom backend) + their
 //     input/output types. The default adapters are wired inside createComind. ---
 export type {

@@ -14,9 +14,10 @@
  * stores (e.g. the in-memory reference store) ignore it.
  */
 
-import type { MemoryStore, EmbeddingProvider, LLMProvider, NewContext, NewGoal, NewAgentProfile } from '@/lib/comind/providers';
+import type { MemoryStore, EmbeddingProvider, LLMProvider, NewContext, NewGoal, NewAgentProfile, MemoryEntryFilters } from '@/lib/comind/providers';
 import type { RunAgentContext } from '@/lib/comind/agentRuntime/types';
 import type { MemoryType } from '@/lib/comind/types';
+import { recallEntriesAndArtifacts } from '@/lib/comind/contextRecall';
 
 export interface CreateComindConfig {
   /** Transitional tenant tag threaded into the runtime; non-tenant stores ignore it. */
@@ -57,6 +58,39 @@ export function createComind(config: CreateComindConfig) {
         embedding,
       });
     },
+
+    /**
+     * Intention-ranked recall WITHOUT a full agent turn — the standalone read
+     * verb (v0.2 item A). Embeds the query with the injected embedder, runs the
+     * 6-signal intention rerank against the injected store, and returns the
+     * surviving rows split into raw `entries` and derived `artifacts`, each
+     * carrying its `intention` score. No LLM, no write-back — pure retrieval.
+     * This un-traps `searchWithIntention`, previously reachable only inside
+     * `runAgent`.
+     *
+     * - `limit` caps the hydrated rows (omit to return all survivors).
+     * - `searchLimit` (default 8) is the per-table candidate pool before rerank.
+     */
+    recall: (
+      contextId: string,
+      query: string,
+      opts?: { limit?: number; searchLimit?: number }
+    ) =>
+      recallEntriesAndArtifacts({
+        userId,
+        contextId,
+        query,
+        limit: opts?.limit,
+        searchLimit: opts?.searchLimit,
+        deps: { store, embeddings },
+      }),
+
+    /**
+     * Plain, unranked listing of raw memory entries — "what's in the box"
+     * (v0.2 item A). Passes straight through to the injected store's filtered
+     * query; no embedding, no rerank. Use `recall` when you want relevance.
+     */
+    listMemories: (filters: MemoryEntryFilters) => store.listMemoryEntries(filters),
 
     /**
      * The CAMA loop: recall → assemble prompt → LLM → memory critic (write-back).

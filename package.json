@@ -43,6 +43,7 @@
     "prepublishOnly": "npm run build && npm run typecheck && npm run demo:prove && npm run demo:check && npm run characterize",
     "demo:prove": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/proveBoundary.ts",
     "demo:check": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/checkBarrelClean.ts",
+    "smoke:recall": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/smokeRecall.ts",
     "demo:play": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/play.ts",
     "demo:tui": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/play.ts --tui",
     "demo:step": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/play.ts --tui --step",
