@@ -16,9 +16,10 @@
 
 import type { MemoryStore, EmbeddingProvider, LLMProvider, NewContext, NewGoal, NewAgentProfile, MemoryEntryFilters } from '@/lib/comind/providers';
 import type { RunAgentContext } from '@/lib/comind/agentRuntime/types';
-import type { MemoryType } from '@/lib/comind/types';
+import type { MemoryType, AttributionType } from '@/lib/comind/types';
 import { recallEntriesAndArtifacts } from '@/lib/comind/contextRecall';
 import { assembleContinuityState, PROMOTION } from '@/lib/comind/continuity';
+import { seedCaptureImportance } from '@/lib/comind/importance';
 
 export interface CreateComindConfig {
   /** Transitional tenant tag threaded into the runtime; non-tenant stores ignore it. */
@@ -39,6 +40,12 @@ export function createComind(config: CreateComindConfig) {
      * Store a raw observation: embed its content with the injected embedder, then
      * persist it through the injected store. The cognitive loop (`runAgent`) does
      * this for the critic's conclusions; this is the host's hook for raw inputs.
+     *
+     * When the caller doesn't pin an `importanceScore`, it's SEEDED at capture
+     * (v0.2 item E) from a semantic goal-alignment blend — cosine between the new
+     * memory and the context's active goals / seed-intent, computed on the fly and
+     * not stored — killing the flat-0.5 cold-start. A caller-supplied score always
+     * wins (explicit intent over the heuristic).
      */
     storeMemory: async (params: {
       contextId: string;
@@ -47,15 +54,28 @@ export function createComind(config: CreateComindConfig) {
       tags?: string[];
       sourceType?: string;
       importanceScore?: number;
+      attributionType?: AttributionType;
+      confidence?: number;
     }) => {
       const embedding = await embeddings.embed(params.content);
+      const importanceScore =
+        params.importanceScore ??
+        (await seedCaptureImportance({
+          contextId: params.contextId,
+          entryEmbedding: embedding,
+          attributionType: params.attributionType,
+          confidence: params.confidence,
+          deps: { store, embeddings },
+        }));
       return store.createMemoryEntry({
         contextId: params.contextId,
         type: params.type ?? 'NOTE',
         content: params.content,
         tags: params.tags,
         sourceType: params.sourceType,
-        importanceScore: params.importanceScore,
+        attributionType: params.attributionType,
+        confidence: params.confidence,
+        importanceScore,
         embedding,
       });
     },
