@@ -229,6 +229,14 @@ export interface MemoryStore {
   getArtifact(id: string): Promise<MemoryArtifact | null>;
 
   /**
+   * The most-recently-created `SUMMARY` artifact in a context, or null (v0.2
+   * carryover). This is the "where we left off" thread: a session-end SUMMARY is
+   * loaded FIRST at the next wake, by rule — not via semantic recall. Ordering is
+   * by creation time (newest wins).
+   */
+  getLatestSummary(contextId: string): Promise<MemoryArtifact | null>;
+
+  /**
    * Create a derived artifact (Bucket C). Persists the pre-computed embedding,
    * records provenance (sourceEntryIds -> ArtifactSourceLink), and writes the
    * critic's goal links (dropping any goalId not in this context).

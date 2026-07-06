@@ -37,10 +37,11 @@ export function renderContinuityState(state: ContinuityState): string {
     : "—";
   out.push(`  foreground · goals: ${goals}`);
 
-  // #3 Carryover — slot until item C writes/loads the session-end SUMMARY.
+  // #3 Carryover — the session-end SUMMARY, loaded first at wake (item C, built).
+  // Empty on a cold boot simply means nothing has been checkpointed yet.
   const carry = carryover.summary
     ? `“${carryover.summary.content}”`
-    : "— (empty until item C: session-end SUMMARY loaded first at wake)";
+    : "— (no checkpoint yet — nothing left off)";
   out.push(`  carryover · ${carry}`);
 
   // #4 Promoted — slot until item C adds the promotion marker + top-N query.

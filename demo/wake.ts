@@ -30,24 +30,40 @@ async function main() {
   const { ctxId } = await seedWorld(store, embeddings, robotDetective.world);
   const comind = createComind({ userId: "demo", store, embeddings, llm });
 
+  // Beat 1 — wake without a query. Cold boot: the frame is there, but there is
+  // no thread yet (carryover empty), because nothing has been left off.
   console.log("══ COLD BOOT ══  (nothing asked yet — the mind is about to wake)");
-  const state = await comind.wake(ctxId);
-  console.log(renderContinuityState(state));
+  const cold = await comind.wake(ctxId);
+  console.log(renderContinuityState(cold));
 
+  // ...a session happens (the detective works the case)... then, at session end,
+  // the host writes a checkpoint capturing where it left off.
   console.log(
-    "\n\n── RE-WAKE ──  (call wake() again — nothing was kept warm; it rebuilds from data)"
+    "\n\n── … session runs, then CHECKPOINT ──  (write 'where we left off' at session end)"
   );
-  const again = await comind.wake(ctxId);
-  console.log(renderContinuityState(again));
+  await comind.checkpoint(
+    ctxId,
+    "Was working the butler angle; still need to confirm who held the cellar key before naming a suspect.",
+    { title: "Dispatch 1 — left off" }
+  );
 
-  const sameFrame =
-    again.governing.context?.id === state.governing.context?.id &&
-    again.foreground.activeGoals.length === state.foreground.activeGoals.length;
+  // Beat 2 — re-wake. The SUMMARY is loaded FIRST: the mind resumes, it doesn't
+  // restart. Nothing was kept warm between the two wakes — the thread was
+  // reconstructed from the stored SUMMARY.
+  console.log("\n── RE-WAKE ──  (carryover is loaded first — resume, not restart)");
+  const rewake = await comind.wake(ctxId);
+  console.log(renderContinuityState(rewake));
+
+  const frameHeld =
+    rewake.governing.context?.id === cold.governing.context?.id &&
+    rewake.foreground.activeGoals.length === cold.foreground.activeGoals.length;
+  const resumed = rewake.carryover.summary !== null && cold.carryover.summary === null;
+  const ok = frameHeld && resumed;
   console.log(
-    `\n${sameFrame ? "✅" : "❌"} re-wake reconstructed the same standing state — continuity ` +
-      `lives in the DATA, not a running process.`
+    `\n${ok ? "✅" : "❌"} the frame held AND the carryover surfaced — the wake reconstructed a ` +
+      `resumable standing state from the DATA, no engine running.`
   );
-  process.exit(sameFrame ? 0 : 1);
+  process.exit(ok ? 0 : 1);
 }
 
 main().catch((e) => {

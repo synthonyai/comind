@@ -187,6 +187,15 @@ export class InMemoryMemoryStore implements MemoryStore {
     return a ? { ...a } : null;
   }
 
+  async getLatestSummary(contextId: string): Promise<MemoryArtifact | null> {
+    let latest: MemoryArtifact | null = null;
+    for (const a of this.artifacts.values()) {
+      if (a.contextId !== contextId || a.type !== "SUMMARY") continue;
+      if (!latest || a.createdAt.getTime() > latest.createdAt.getTime()) latest = a;
+    }
+    return latest ? { ...latest } : null;
+  }
+
   async createArtifact(input: NewArtifact): Promise<MemoryArtifact> {
     const now = new Date();
     const artifact: MemoryArtifact = {

@@ -94,6 +94,26 @@ export function createComind(config: CreateComindConfig) {
     listMemories: (filters: MemoryEntryFilters) => store.listMemoryEntries(filters),
 
     /**
+     * Checkpoint — write a session-end `SUMMARY` artifact capturing "where we
+     * left off" (v0.2 item C, carryover). The next `wake()` loads it first, so
+     * the mind *resumes* instead of *restarts*. The summary is embedded (a real
+     * derived artifact); it carries no source entries because it's a session
+     * wrap-up, not a critic derivation from specific clues.
+     */
+    checkpoint: async (contextId: string, summary: string, opts?: { title?: string; confidence?: number }) => {
+      const embedding = await embeddings.embed(summary);
+      return store.createArtifact({
+        contextId,
+        type: 'SUMMARY',
+        content: summary,
+        title: opts?.title ?? null,
+        confidence: opts?.confidence,
+        embedding,
+        sourceEntryIds: [],
+      });
+    },
+
+    /**
      * Wake — assemble the standing "state of mind" for a context BEFORE any
      * input (v0.2 item B). Pure call: composes the governing frame + foreground
      * (and, from item C, carryover + promoted) into a returnable

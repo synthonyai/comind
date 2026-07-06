@@ -101,14 +101,18 @@ export async function assembleContinuityState(params: {
   const store = deps?.store;
   if (!store) throw new Error('CoMind: assembleContinuityState requires an injected MemoryStore (no default backend).');
 
-  const { agent, context, goals } = await loadFrame(store, contextId);
+  const [{ agent, context, goals }, summary] = await Promise.all([
+    loadFrame(store, contextId),
+    // Carryover — the session-end SUMMARY, loaded FIRST at wake by rule (v0.2
+    // item C). "Where we left off" — makes a wake *resume* instead of *restart*.
+    store.getLatestSummary(contextId),
+  ]);
 
   return {
     contextId,
     governing: { agentProfile: agent, context },
     foreground: { contextId, activeGoals: goals },
-    // SLOT — item C wires the session-end SUMMARY load here.
-    carryover: { summary: null },
+    carryover: { summary },
     // SLOT — item C adds the promotion marker + "promotable top-N" query here.
     promoted: { entries: [], artifacts: [] },
   };
