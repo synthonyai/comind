@@ -18,7 +18,7 @@ import type { MemoryStore, EmbeddingProvider, LLMProvider, NewContext, NewGoal, 
 import type { RunAgentContext } from '@/lib/comind/agentRuntime/types';
 import type { MemoryType } from '@/lib/comind/types';
 import { recallEntriesAndArtifacts } from '@/lib/comind/contextRecall';
-import { assembleContinuityState } from '@/lib/comind/continuity';
+import { assembleContinuityState, PROMOTION } from '@/lib/comind/continuity';
 
 export interface CreateComindConfig {
   /** Transitional tenant tag threaded into the runtime; non-tenant stores ignore it. */
@@ -112,6 +112,18 @@ export function createComind(config: CreateComindConfig) {
         sourceEntryIds: [],
       });
     },
+
+    /**
+     * Promote a derived belief so it rides the continuity packet across wakes
+     * (`wake().promoted`) — v0.2 item C. Expressed through the schema's standing
+     * signal: pins `consolidationScore` high. Standing, not kind — the artifact
+     * stays a MemoryArtifact. Returns the updated artifact, or null if it does
+     * not exist. (The refined auto-promotion + decay policy is v0.3.)
+     */
+    promote: (artifactId: string) => store.setArtifactConsolidation(artifactId, PROMOTION.PIN),
+
+    /** Demote a belief — reset its standing to the consolidation base. Inverse of `promote`. */
+    demote: (artifactId: string) => store.setArtifactConsolidation(artifactId, PROMOTION.BASE),
 
     /**
      * Wake — assemble the standing "state of mind" for a context BEFORE any

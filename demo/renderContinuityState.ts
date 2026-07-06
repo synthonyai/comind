@@ -44,12 +44,15 @@ export function renderContinuityState(state: ContinuityState): string {
     : "— (no checkpoint yet — nothing left off)";
   out.push(`  carryover · ${carry}`);
 
-  // #4 Promoted — slot until item C adds the promotion marker + top-N query.
-  const promotedCount = promoted.entries.length + promoted.artifacts.length;
-  const prom = promotedCount
-    ? `${promotedCount} belief(s) with earned standing`
-    : "— (empty until item C: promotion marker + promotable top-N)";
-  out.push(`  promoted  · ${prom}`);
+  // #4 Promoted — the "sticky" beliefs riding the packet across wakes (item C).
+  if (promoted.artifacts.length) {
+    out.push(`  promoted  · ${promoted.artifacts.length} belief(s) with earned standing:`);
+    for (const a of promoted.artifacts) {
+      out.push(`            · ◆ [${a.type}] ${a.title ?? a.content}  (standing ${f2(a.consolidationScore)})`);
+    }
+  } else {
+    out.push(`  promoted  · — (nothing promoted yet)`);
+  }
 
   out.push(`╚═════════════════════════════════════════════════════════════════════`);
   return out.join("\n");

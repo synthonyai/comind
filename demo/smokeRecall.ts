@@ -69,7 +69,7 @@ async function main() {
   check("wake loads the agent profile (governing)", (state.governing.agentProfile?.directives.length ?? 0) > 0);
   check("wake puts active goals in the foreground", state.foreground.activeGoals[0]?.id === goal.id);
   check("carryover is an honest empty slot (item C fills it)", state.carryover.summary === null);
-  check("promoted is an honest empty slot (item C fills it)", state.promoted.entries.length === 0 && state.promoted.artifacts.length === 0);
+  check("promoted starts empty (nothing promoted yet)", state.promoted.artifacts.length === 0);
 
   console.log("\n[smoke] re-wake — stateless ≠ discontinuous (reconstructs from data):");
   const state2 = await comind.wake(ctx.id);

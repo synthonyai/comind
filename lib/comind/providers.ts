@@ -237,6 +237,24 @@ export interface MemoryStore {
   getLatestSummary(contextId: string): Promise<MemoryArtifact | null>;
 
   /**
+   * Directly set an artifact's `consolidationScore` (clamped to [0,1]) — the
+   * standing signal. This is the manual override behind the library's
+   * promote/demote; the schema's living loop otherwise accrues consolidation
+   * through use (`activateArtifacts`). Returns the updated artifact, or null if
+   * it does not exist. (A later activation may recompute this from
+   * activationCount; refined promote/decay policy is v0.3.)
+   */
+  setArtifactConsolidation(id: string, consolidationScore: number): Promise<MemoryArtifact | null>;
+
+  /**
+   * The "promoted" artifacts in a context — the packet's promoted slice. Derived
+   * beliefs whose `consolidationScore >= minConsolidation` (i.e. settled enough
+   * to ride the standing state), ordered by consolidation desc, capped at
+   * `limit`. `SUMMARY` artifacts are excluded — those play the carryover role.
+   */
+  listPromotedArtifacts(contextId: string, minConsolidation: number, limit?: number): Promise<MemoryArtifact[]>;
+
+  /**
    * Create a derived artifact (Bucket C). Persists the pre-computed embedding,
    * records provenance (sourceEntryIds -> ArtifactSourceLink), and writes the
    * critic's goal links (dropping any goalId not in this context).

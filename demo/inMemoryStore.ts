@@ -196,6 +196,28 @@ export class InMemoryMemoryStore implements MemoryStore {
     return latest ? { ...latest } : null;
   }
 
+  async setArtifactConsolidation(id: string, consolidationScore: number): Promise<MemoryArtifact | null> {
+    const a = this.artifacts.get(id);
+    if (!a) return null;
+    const clamped = Math.max(0, Math.min(1, consolidationScore));
+    const updated: MemoryArtifact = { ...a, consolidationScore: clamped, updatedAt: new Date() };
+    this.artifacts.set(id, updated);
+    return { ...updated };
+  }
+
+  async listPromotedArtifacts(contextId: string, minConsolidation: number, limit = 8): Promise<MemoryArtifact[]> {
+    return [...this.artifacts.values()]
+      .filter(
+        (a) =>
+          a.contextId === contextId &&
+          a.type !== "SUMMARY" &&
+          a.consolidationScore >= minConsolidation,
+      )
+      .sort((x, y) => y.consolidationScore - x.consolidationScore || y.createdAt.getTime() - x.createdAt.getTime())
+      .slice(0, limit)
+      .map((a) => ({ ...a }));
+  }
+
   async createArtifact(input: NewArtifact): Promise<MemoryArtifact> {
     const now = new Date();
     const artifact: MemoryArtifact = {

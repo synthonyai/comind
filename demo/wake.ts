@@ -58,10 +58,41 @@ async function main() {
     rewake.governing.context?.id === cold.governing.context?.id &&
     rewake.foreground.activeGoals.length === cold.foreground.activeGoals.length;
   const resumed = rewake.carryover.summary !== null && cold.carryover.summary === null;
-  const ok = frameHeld && resumed;
+
+  // Beat 3 — a belief that sticks (promotion). The detective reaches a durable
+  // conclusion; the host promotes it. It then rides the packet across wakes —
+  // and can later demote.
   console.log(
-    `\n${ok ? "✅" : "❌"} the frame held AND the carryover surfaced — the wake reconstructed a ` +
-      `resumable standing state from the DATA, no engine running.`
+    "\n\n── … a conclusion forms, then PROMOTE ──  (mark a derived belief 'sticky')"
+  );
+  const belief = await store.createArtifact({
+    contextId: ctxId,
+    type: "DECISION",
+    content: "The cellar key never leaves the housekeeper — treat it as a standing constraint.",
+    title: "Cellar key stays with the housekeeper",
+    confidence: 0.9,
+    embedding: await embeddings.embed("cellar key housekeeper standing constraint"),
+    sourceEntryIds: [],
+  });
+  await comind.promote(belief.id);
+
+  console.log("\n── WAKE (belief promoted) ──  (it now rides the standing state)");
+  const withBelief = await comind.wake(ctxId);
+  console.log(renderContinuityState(withBelief));
+  const promotedRode = withBelief.promoted.artifacts.some((a) => a.id === belief.id);
+
+  console.log("\n── … re-evaluated, then DEMOTE ──  (standing can be revoked)");
+  await comind.demote(belief.id);
+  const afterDemote = await comind.wake(ctxId);
+  const demotedGone = !afterDemote.promoted.artifacts.some((a) => a.id === belief.id);
+  console.log(
+    `   promoted slice: ${withBelief.promoted.artifacts.length} belief(s) → ${afterDemote.promoted.artifacts.length} after demote`
+  );
+
+  const ok = frameHeld && resumed && promotedRode && demotedGone;
+  console.log(
+    `\n${ok ? "✅" : "❌"} frame held · carryover resumed · a promoted belief rode the packet and ` +
+      `then demoted — the whole standing state was reconstructed from DATA each wake, no engine running.`
   );
   process.exit(ok ? 0 : 1);
 }

@@ -22,14 +22,32 @@
 //
 // #1–2 are the *frame* (present by rule) and are fully assembled here. #3–4 are
 // the *selection* (present by earning it); their real content needs a
-// session-end SUMMARY write + a promotion marker, both of which land in v0.2
-// item C. Until then they are wired as honest empty slots, so the packet shape
+// session-end SUMMARY write + promotion (expressed through consolidationScore),
+// both of which land in v0.2 item C. Until then they are empty slots, so the packet shape
 // is complete and the two ingredients drop in without a rewrite. (When #3–4
 // carry real content, assembly becomes a selection under a budget — see
 // agentRuntime/tokenBudget.ts — but there is nothing to trim while they're empty.)
 
 import type { MemoryStore, EmbeddingProvider } from '@/lib/comind/providers';
-import type { AgentProfile, Context, Goal, MemoryEntry, MemoryArtifact } from '@/lib/comind/types';
+import type { AgentProfile, Context, Goal, MemoryArtifact } from '@/lib/comind/types';
+import { ACTIVATION } from '@/lib/comind/activation';
+
+/**
+ * Promotion policy-lite for v0.2. Promotion is expressed through the schema's
+ * standing signal (`consolidationScore`), not a separate marker: a derived
+ * belief at/above `THRESHOLD` is "promoted" and rides the continuity packet.
+ * `PIN` is what an explicit `promote()` sets; `demote()` resets to the schema's
+ * consolidation base. The refined auto-promotion + decay-driven demotion policy
+ * is v0.3.
+ */
+export const PROMOTION = {
+  /** consolidationScore at/above which a belief rides the packet. */
+  THRESHOLD: 0.6,
+  /** consolidationScore an explicit promote() pins to. */
+  PIN: 0.9,
+  /** consolidationScore an explicit demote() resets to (the schema base). */
+  BASE: ACTIVATION.CONSOLIDATION_BASE,
+} as const;
 
 /**
  * The governing/foreground frame: the by-rule reads shared by the continuity
@@ -73,11 +91,12 @@ export interface ContinuityState {
   };
 
   /**
-   * #4 Promoted derived memory — beliefs that earned standing. SLOT: the
-   * promotion marker + "promotable top-N" query land in v0.2 item C.
+   * #4 Promoted derived memory — the "sticky" beliefs that earned standing and
+   * ride the packet across wakes (v0.2 item C). Derived-only by design: raw
+   * entries are not promoted. Ordered by standing; re-evaluated each wake (the
+   * promote/demote policy itself is v0.3).
    */
   promoted: {
-    entries: MemoryEntry[];
     artifacts: MemoryArtifact[];
   };
 }
@@ -101,11 +120,14 @@ export async function assembleContinuityState(params: {
   const store = deps?.store;
   if (!store) throw new Error('CoMind: assembleContinuityState requires an injected MemoryStore (no default backend).');
 
-  const [{ agent, context, goals }, summary] = await Promise.all([
+  const [{ agent, context, goals }, summary, promotedArtifacts] = await Promise.all([
     loadFrame(store, contextId),
     // Carryover — the session-end SUMMARY, loaded FIRST at wake by rule (v0.2
     // item C). "Where we left off" — makes a wake *resume* instead of *restart*.
     store.getLatestSummary(contextId),
+    // Promoted — the "sticky" beliefs, top-N by standing (consolidationScore >=
+    // threshold) (v0.2 item C).
+    store.listPromotedArtifacts(contextId, PROMOTION.THRESHOLD),
   ]);
 
   return {
@@ -113,7 +135,6 @@ export async function assembleContinuityState(params: {
     governing: { agentProfile: agent, context },
     foreground: { contextId, activeGoals: goals },
     carryover: { summary },
-    // SLOT — item C adds the promotion marker + "promotable top-N" query here.
-    promoted: { entries: [], artifacts: [] },
+    promoted: { artifacts: promotedArtifacts },
   };
 }
