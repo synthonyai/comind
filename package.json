@@ -45,6 +45,7 @@
     "demo:check": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/checkBarrelClean.ts",
     "smoke:recall": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/smokeRecall.ts",
     "demo:wake": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/wake.ts",
+    "demo:awaken": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/awaken.ts",
     "demo:play": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/play.ts",
     "demo:tui": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/play.ts --tui",
     "demo:step": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/play.ts --tui --step",
