@@ -31,3 +31,12 @@ jobs:
 
       - name: Characterization oracles (cognitive contract)
         run: npm run characterize
+
+      - name: v0.2 recall surface (recall / listMemories / wake)
+        run: npm run smoke:recall
+
+      - name: v0.2 continuity beats (carryover / promotion / soft-membership / clear)
+        run: npm run demo:wake
+
+      - name: v0.2 awake panel (wake / re-prioritize / promote / clear)
+        run: npm run demo:awaken

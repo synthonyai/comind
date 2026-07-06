@@ -1,6 +1,6 @@
 {
-  "name": "@synthonyai/comind",
-  "version": "0.1.0",
+  "name": "@comind-ai/core",
+  "version": "0.2.0",
   "description": "A portable cognitive layer for AI agents — intention-driven memory recall, a typed meaning layer (artifacts), provenance, and an inspectable agent runtime. Bring your own store, embeddings, and LLM.",
   "license": "MPL-2.0",
   "repository": {
@@ -40,7 +40,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "rm -rf dist && tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
-    "prepublishOnly": "npm run build && npm run typecheck && npm run demo:prove && npm run demo:check && npm run characterize",
+    "prepublishOnly": "npm run build && npm run typecheck && npm run demo:prove && npm run demo:check && npm run characterize && npm run smoke:recall && npm run demo:wake && npm run demo:awaken",
     "demo:prove": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/proveBoundary.ts",
     "demo:check": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/checkBarrelClean.ts",
     "smoke:recall": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' -r tsconfig-paths/register demo/smokeRecall.ts",
