@@ -250,6 +250,28 @@ export class InMemoryMemoryStore implements MemoryStore {
     return { ...artifact };
   }
 
+  async clearContextMemory(contextId: string): Promise<{ entries: number; artifacts: number }> {
+    // Episodic tier: every entry in the context.
+    let entries = 0;
+    for (const [id, e] of this.entries) {
+      if (e.contextId !== contextId) continue;
+      this.entries.delete(id);
+      entries++;
+    }
+    // Derived tier: every artifact in the context EXCEPT SUMMARY (the carryover
+    // thread survives — same exclusion rule as listPromotedArtifacts).
+    let artifacts = 0;
+    for (const [id, a] of this.artifacts) {
+      if (a.contextId !== contextId || a.type === "SUMMARY") continue;
+      this.artifacts.delete(id);
+      this.artifactSources.delete(id);
+      this.artifactGoalLinks.delete(id);
+      artifacts++;
+    }
+    // Governing memory (Context / AgentProfile / Goal) is untouched by design.
+    return { entries, artifacts };
+  }
+
   // --- The living loop (activation feedback) -------------------------------
 
   async activateEntries(ids: string[]): Promise<number> {

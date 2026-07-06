@@ -261,6 +261,27 @@ export interface MemoryStore {
    */
   createArtifact(input: NewArtifact): Promise<MemoryArtifact>;
 
+  /**
+   * Tier-aware clear (v0.2 item D) — HARD-FORGET a context's episodic + derived
+   * memory while the standing self survives. Deletes:
+   *   - ALL `MemoryEntry` rows in the context (the episodic tier), and
+   *   - all `MemoryArtifact` rows EXCEPT `type === 'SUMMARY'` (the derived tier;
+   *     promoted beliefs included — promotion is standing, not immunity).
+   * KEEPS, by tier:
+   *   - governing memory — `Context` / `AgentProfile` / `Goal` (constitutive), and
+   *   - the carryover `SUMMARY`(s) — the "where we left off" thread (same
+   *     SUMMARY-exclusion rule as `listPromotedArtifacts`).
+   * So a `wake()` after a clear RECONSTRUCTS the standing state (identity +
+   * carryover) from what survived, with no engine running — continuity lives in
+   * the DATA, not a live loop.
+   *
+   * This is a genuine memory operation (hard delete), deliberately NOT the
+   * app-layer soft-delete / `archivedAt` retention concern the cognitive layer
+   * excludes by design (see docs/HowDoesCognitiveLayerWork.md). Returns the count
+   * of rows removed per tier.
+   */
+  clearContextMemory(contextId: string): Promise<{ entries: number; artifacts: number }>;
+
   // --- The living loop (activation feedback) ---
   // Implementations MUST apply the shared rule in lib/comind/activation.ts so
   // recall behaves consistently across backends. Returns the number of rows hit.

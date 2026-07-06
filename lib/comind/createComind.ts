@@ -126,6 +126,17 @@ export function createComind(config: CreateComindConfig) {
     demote: (artifactId: string) => store.setArtifactConsolidation(artifactId, PROMOTION.BASE),
 
     /**
+     * Tier-aware clear (v0.2 item D) — HARD-FORGET a context's episodic + derived
+     * memory while the standing self survives: wipes all raw entries and all
+     * non-SUMMARY artifacts (promoted beliefs included), KEEPS governing memory
+     * (context / profile / goals) AND the carryover SUMMARY. A `wake()` after
+     * this reconstructs identity + carryover from the surviving data — proving
+     * continuity lives in the DATA, not a running loop (stateless ≠
+     * discontinuous). A genuine forget, not the app-layer soft-delete/archive.
+     */
+    clear: (contextId: string) => store.clearContextMemory(contextId),
+
+    /**
      * Wake — assemble the standing "state of mind" for a context BEFORE any
      * input (v0.2 item B). Pure call: composes the governing frame + foreground
      * (and, from item C, carryover + promoted) into a returnable

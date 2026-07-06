@@ -1,15 +1,19 @@
 /**
- * demo/wake.ts — the v0.2 "waking-up" demo, beat 1 ("wake without a query").
+ * demo/wake.ts — the v0.2 "waking-up" demo (narrated-transcript cut).
  *
  * Cold-boots the same robot-detective world the v0.1 demo uses, then — before
  * any input — CALLS `comind.wake()` and renders the assembled continuity state.
- * Then it re-wakes to show the standing state reconstructs identically: the
- * "stateless ≠ discontinuous" beat, in narrated form. No loop runs; the packet
- * is recomputed from the data each wake.
+ * Walks the full v0.2 beat list, each recomputed from the data (no loop runs):
+ *   1. wake without a query        — the packet assembles before any input
+ *   2. carryover                   — a session-end SUMMARY is loaded first
+ *   3. promotion                   — a sticky belief rides the packet, then demotes
+ *   4. soft-membership recall      — a foreign-context memory surfaces (demoted)
+ *   money-shot: clear()            — hard-forget episodic+derived, then re-wake
+ *                                    into the full standing self (stateless ≠
+ *                                    discontinuous)
  *
  * Runs on the in-memory store + stubs, so it needs no keys and stays inside the
- * clean boundary. Later beats (carryover / promotion / soft-membership / the
- * clear-button money-shot) fill the slots this pane already renders.
+ * clean boundary.
  *
  * Run: npm run demo:wake
  */
@@ -117,10 +121,56 @@ async function main() {
     !!ownHit && !!foreignHit &&
     hits.entries.findIndex((e) => e.id === ownHit.id) < hits.entries.findIndex((e) => e.id === foreignHit.id);
 
-  const ok = frameHeld && resumed && promotedRode && demotedGone && softMembership;
+  // ── MONEY-SHOT — the clear button (proves stateless ≠ discontinuous) ──────
+  // Re-promote the belief so the state is rich before the wipe: a sticky belief
+  // rides the packet, a carryover SUMMARY is present, and there are raw episodic
+  // entries in the case context.
+  await comind.promote(belief.id);
+  console.log("\n\n══ FULL STANDING STATE ══  (identity · carryover · a promoted belief · raw episodic memory)");
+  const before = await comind.wake(ctxId);
+  console.log(renderContinuityState(before));
+  const beforeEntries = await comind.listMemories({ contextId: ctxId });
+
+  // HARD-FORGET: wipe the episodic + derived tiers. Governing (context / profile
+  // / goals) and the carryover SUMMARY survive by rule. No loop runs.
+  console.log(
+    "\n── 🧹 clear() ──  (hard-forget episodic + derived; governing + carryover survive)"
+  );
+  const removed = await comind.clear(ctxId);
+  console.log(
+    `   removed ${removed.entries} episodic entr${removed.entries === 1 ? "y" : "ies"} + ` +
+      `${removed.artifacts} derived artifact(s) — governing frame + carryover SUMMARY left intact.`
+  );
+
+  // Re-wake from the surviving data alone. The standing state RECONSTRUCTS:
+  // identity + carryover come back, the promoted belief + raw entries are gone.
+  console.log("\n── RE-WAKE (after clear) ──  (standing state reconstructs from DATA, no engine ran)");
+  const after = await comind.wake(ctxId);
+  console.log(renderContinuityState(after));
+  const afterEntries = await comind.listMemories({ contextId: ctxId });
+
+  const moneyShot =
+    // before: a genuinely rich state, so the wipe is meaningful
+    before.promoted.artifacts.length > 0 &&
+    before.carryover.summary !== null &&
+    beforeEntries.length > 0 &&
+    // governing survived (same identity + same active-goal set)
+    after.governing.context?.id === before.governing.context?.id &&
+    after.governing.agentProfile?.id === before.governing.agentProfile?.id &&
+    after.foreground.activeGoals.length === before.foreground.activeGoals.length &&
+    // carryover survived — the SAME SUMMARY thread, reconstructed on wake
+    after.carryover.summary?.id === before.carryover.summary?.id &&
+    // episodic + derived were forgotten
+    after.promoted.artifacts.length === 0 &&
+    afterEntries.length === 0 &&
+    removed.entries === beforeEntries.length &&
+    removed.artifacts >= 1;
+
+  const ok = frameHeld && resumed && promotedRode && demotedGone && softMembership && moneyShot;
   console.log(
     `\n${ok ? "✅" : "❌"} frame held · carryover resumed · a promoted belief rode the packet and ` +
-      `then demoted · a neighbouring-context memory surfaced (demoted, not excluded) — the whole ` +
+      `then demoted · a neighbouring-context memory surfaced (demoted, not excluded) · clear() ` +
+      `hard-forgot episodic+derived yet the mind woke back into its full standing self — the whole ` +
       `standing state was reconstructed from DATA each wake, no engine running.`
   );
   process.exit(ok ? 0 : 1);
