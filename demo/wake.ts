@@ -89,10 +89,39 @@ async function main() {
     `   promoted slice: ${withBelief.promoted.artifacts.length} belief(s) → ${afterDemote.promoted.artifacts.length} after demote`
   );
 
-  const ok = frameHeld && resumed && promotedRode && demotedGone;
+  // Beat 4 — soft-membership recall (context = foreground, not box). A memory
+  // filed under ANOTHER context still surfaces on recall here, ranked below the
+  // own-context memory (the same-context boost demotes it, it isn't excluded).
+  console.log(
+    "\n\n── … a NEIGHBOURING context exists, then RECALL ──  (context is a lens, not a box)"
+  );
+  const harbor = await store.createContext({
+    name: "Harbor logistics",
+    seedIntent: "Track cargo movements at the harbor.",
+  });
+  // Same fact filed in both contexts — so base relevance is equal and the
+  // same-context boost is the ONLY differentiator (isolates the beat cleanly).
+  const fact = "The crate left the dock on the night ferry.";
+  await store.createMemoryEntry({ contextId: ctxId, type: "NOTE", content: fact, embedding: await embeddings.embed(fact) });
+  await store.createMemoryEntry({ contextId: harbor.id, type: "NOTE", content: fact, embedding: await embeddings.embed(fact) });
+
+  const hits = await comind.recall(ctxId, "what happened to the crate at the dock?");
+  console.log("   recall('what happened to the crate at the dock?') from the case context:");
+  for (const e of hits.entries) {
+    const where = e.contextId === ctxId ? "own" : "OTHER-ctx";
+    console.log(`     ● [${where}] “${e.content}”  (intent ${e.intention.toFixed(2)})`);
+  }
+  const ownHit = hits.entries.find((e) => e.contextId === ctxId);
+  const foreignHit = hits.entries.find((e) => e.contextId === harbor.id);
+  const softMembership =
+    !!ownHit && !!foreignHit &&
+    hits.entries.findIndex((e) => e.id === ownHit.id) < hits.entries.findIndex((e) => e.id === foreignHit.id);
+
+  const ok = frameHeld && resumed && promotedRode && demotedGone && softMembership;
   console.log(
     `\n${ok ? "✅" : "❌"} frame held · carryover resumed · a promoted belief rode the packet and ` +
-      `then demoted — the whole standing state was reconstructed from DATA each wake, no engine running.`
+      `then demoted · a neighbouring-context memory surfaced (demoted, not excluded) — the whole ` +
+      `standing state was reconstructed from DATA each wake, no engine running.`
   );
   process.exit(ok ? 0 : 1);
 }
