@@ -14,9 +14,12 @@
  * stores (e.g. the in-memory reference store) ignore it.
  */
 
-import type { MemoryStore, EmbeddingProvider, LLMProvider, NewContext, NewGoal, NewAgentProfile } from '@/lib/comind/providers';
+import type { MemoryStore, EmbeddingProvider, LLMProvider, NewContext, NewGoal, NewAgentProfile, MemoryEntryFilters } from '@/lib/comind/providers';
 import type { RunAgentContext } from '@/lib/comind/agentRuntime/types';
-import type { MemoryType } from '@/lib/comind/types';
+import type { MemoryType, AttributionType } from '@/lib/comind/types';
+import { recallEntriesAndArtifacts } from '@/lib/comind/contextRecall';
+import { assembleContinuityState, PROMOTION } from '@/lib/comind/continuity';
+import { seedCaptureImportance } from '@/lib/comind/importance';
 
 export interface CreateComindConfig {
   /** Transitional tenant tag threaded into the runtime; non-tenant stores ignore it. */
@@ -37,6 +40,12 @@ export function createComind(config: CreateComindConfig) {
      * Store a raw observation: embed its content with the injected embedder, then
      * persist it through the injected store. The cognitive loop (`runAgent`) does
      * this for the critic's conclusions; this is the host's hook for raw inputs.
+     *
+     * When the caller doesn't pin an `importanceScore`, it's SEEDED at capture
+     * (v0.2 item E) from a semantic goal-alignment blend — cosine between the new
+     * memory and the context's active goals / seed-intent, computed on the fly and
+     * not stored — killing the flat-0.5 cold-start. A caller-supplied score always
+     * wins (explicit intent over the heuristic).
      */
     storeMemory: async (params: {
       contextId: string;
@@ -45,18 +54,118 @@ export function createComind(config: CreateComindConfig) {
       tags?: string[];
       sourceType?: string;
       importanceScore?: number;
+      attributionType?: AttributionType;
+      confidence?: number;
     }) => {
       const embedding = await embeddings.embed(params.content);
+      const importanceScore =
+        params.importanceScore ??
+        (await seedCaptureImportance({
+          contextId: params.contextId,
+          entryEmbedding: embedding,
+          attributionType: params.attributionType,
+          confidence: params.confidence,
+          deps: { store, embeddings },
+        }));
       return store.createMemoryEntry({
         contextId: params.contextId,
         type: params.type ?? 'NOTE',
         content: params.content,
         tags: params.tags,
         sourceType: params.sourceType,
-        importanceScore: params.importanceScore,
+        attributionType: params.attributionType,
+        confidence: params.confidence,
+        importanceScore,
         embedding,
       });
     },
+
+    /**
+     * Intention-ranked recall WITHOUT a full agent turn — the standalone read
+     * verb (v0.2 item A). Embeds the query with the injected embedder, runs the
+     * 6-signal intention rerank against the injected store, and returns the
+     * surviving rows split into raw `entries` and derived `artifacts`, each
+     * carrying its `intention` score. No LLM, no write-back — pure retrieval.
+     * This un-traps `searchWithIntention`, previously reachable only inside
+     * `runAgent`.
+     *
+     * - `limit` caps the hydrated rows (omit to return all survivors).
+     * - `searchLimit` (default 8) is the per-table candidate pool before rerank.
+     */
+    recall: (
+      contextId: string,
+      query: string,
+      opts?: { limit?: number; searchLimit?: number }
+    ) =>
+      recallEntriesAndArtifacts({
+        userId,
+        contextId,
+        query,
+        limit: opts?.limit,
+        searchLimit: opts?.searchLimit,
+        deps: { store, embeddings },
+      }),
+
+    /**
+     * Plain, unranked listing of raw memory entries — "what's in the box"
+     * (v0.2 item A). Passes straight through to the injected store's filtered
+     * query; no embedding, no rerank. Use `recall` when you want relevance.
+     */
+    listMemories: (filters: MemoryEntryFilters) => store.listMemoryEntries(filters),
+
+    /**
+     * Checkpoint — write a session-end `SUMMARY` artifact capturing "where we
+     * left off" (v0.2 item C, carryover). The next `wake()` loads it first, so
+     * the mind *resumes* instead of *restarts*. The summary is embedded (a real
+     * derived artifact); it carries no source entries because it's a session
+     * wrap-up, not a critic derivation from specific clues.
+     */
+    checkpoint: async (contextId: string, summary: string, opts?: { title?: string; confidence?: number }) => {
+      const embedding = await embeddings.embed(summary);
+      return store.createArtifact({
+        contextId,
+        type: 'SUMMARY',
+        content: summary,
+        title: opts?.title ?? null,
+        confidence: opts?.confidence,
+        embedding,
+        sourceEntryIds: [],
+      });
+    },
+
+    /**
+     * Promote a derived belief so it rides the continuity packet across wakes
+     * (`wake().promoted`) — v0.2 item C. Expressed through the schema's standing
+     * signal: pins `consolidationScore` high. Standing, not kind — the artifact
+     * stays a MemoryArtifact. Returns the updated artifact, or null if it does
+     * not exist. (The refined auto-promotion + decay policy is v0.3.)
+     */
+    promote: (artifactId: string) => store.setArtifactConsolidation(artifactId, PROMOTION.PIN),
+
+    /** Demote a belief — reset its standing to the consolidation base. Inverse of `promote`. */
+    demote: (artifactId: string) => store.setArtifactConsolidation(artifactId, PROMOTION.BASE),
+
+    /**
+     * Tier-aware clear (v0.2 item D) — HARD-FORGET a context's episodic + derived
+     * memory while the standing self survives: wipes all raw entries and all
+     * non-SUMMARY artifacts (promoted beliefs included), KEEPS governing memory
+     * (context / profile / goals) AND the carryover SUMMARY. A `wake()` after
+     * this reconstructs identity + carryover from the surviving data — proving
+     * continuity lives in the DATA, not a running loop (stateless ≠
+     * discontinuous). A genuine forget, not the app-layer soft-delete/archive.
+     */
+    clear: (contextId: string) => store.clearContextMemory(contextId),
+
+    /**
+     * Wake — assemble the standing "state of mind" for a context BEFORE any
+     * input (v0.2 item B). Pure call: composes the governing frame + foreground
+     * (and, from item C, carryover + promoted) into a returnable
+     * ContinuityState packet and forgets it. Cold-boot and re-wake are the same
+     * call. This is the continuity door — continuity reconstructed from data,
+     * not a live object kept warm (that is the v0.3 engine).
+     */
+    wake: (contextId: string, opts?: { focusQuery?: string }) =>
+      assembleContinuityState({ userId, contextId, deps: { store, embeddings }, focusQuery: opts?.focusQuery }),
 
     /**
      * The CAMA loop: recall → assemble prompt → LLM → memory critic (write-back).

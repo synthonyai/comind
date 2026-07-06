@@ -229,11 +229,58 @@ export interface MemoryStore {
   getArtifact(id: string): Promise<MemoryArtifact | null>;
 
   /**
+   * The most-recently-created `SUMMARY` artifact in a context, or null (v0.2
+   * carryover). This is the "where we left off" thread: a session-end SUMMARY is
+   * loaded FIRST at the next wake, by rule — not via semantic recall. Ordering is
+   * by creation time (newest wins).
+   */
+  getLatestSummary(contextId: string): Promise<MemoryArtifact | null>;
+
+  /**
+   * Directly set an artifact's `consolidationScore` (clamped to [0,1]) — the
+   * standing signal. This is the manual override behind the library's
+   * promote/demote; the schema's living loop otherwise accrues consolidation
+   * through use (`activateArtifacts`). Returns the updated artifact, or null if
+   * it does not exist. (A later activation may recompute this from
+   * activationCount; refined promote/decay policy is v0.3.)
+   */
+  setArtifactConsolidation(id: string, consolidationScore: number): Promise<MemoryArtifact | null>;
+
+  /**
+   * The "promoted" artifacts in a context — the packet's promoted slice. Derived
+   * beliefs whose `consolidationScore >= minConsolidation` (i.e. settled enough
+   * to ride the standing state), ordered by consolidation desc, capped at
+   * `limit`. `SUMMARY` artifacts are excluded — those play the carryover role.
+   */
+  listPromotedArtifacts(contextId: string, minConsolidation: number, limit?: number): Promise<MemoryArtifact[]>;
+
+  /**
    * Create a derived artifact (Bucket C). Persists the pre-computed embedding,
    * records provenance (sourceEntryIds -> ArtifactSourceLink), and writes the
    * critic's goal links (dropping any goalId not in this context).
    */
   createArtifact(input: NewArtifact): Promise<MemoryArtifact>;
+
+  /**
+   * Tier-aware clear (v0.2 item D) — HARD-FORGET a context's episodic + derived
+   * memory while the standing self survives. Deletes:
+   *   - ALL `MemoryEntry` rows in the context (the episodic tier), and
+   *   - all `MemoryArtifact` rows EXCEPT `type === 'SUMMARY'` (the derived tier;
+   *     promoted beliefs included — promotion is standing, not immunity).
+   * KEEPS, by tier:
+   *   - governing memory — `Context` / `AgentProfile` / `Goal` (constitutive), and
+   *   - the carryover `SUMMARY`(s) — the "where we left off" thread (same
+   *     SUMMARY-exclusion rule as `listPromotedArtifacts`).
+   * So a `wake()` after a clear RECONSTRUCTS the standing state (identity +
+   * carryover) from what survived, with no engine running — continuity lives in
+   * the DATA, not a live loop.
+   *
+   * This is a genuine memory operation (hard delete), deliberately NOT the
+   * app-layer soft-delete / `archivedAt` retention concern the cognitive layer
+   * excludes by design (see docs/HowDoesCognitiveLayerWork.md). Returns the count
+   * of rows removed per tier.
+   */
+  clearContextMemory(contextId: string): Promise<{ entries: number; artifacts: number }>;
 
   // --- The living loop (activation feedback) ---
   // Implementations MUST apply the shared rule in lib/comind/activation.ts so

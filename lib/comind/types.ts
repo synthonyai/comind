@@ -106,6 +106,13 @@ export interface MemoryArtifact {
 
   // --- Weighting / operational signals (cognitive target #1) ---
   accessScore: number;
+  /**
+   * How settled/established this belief is vs. still tentative — the schema's
+   * standing signal (indexed for "give me the most consolidated"). v0.2
+   * promotion is expressed THROUGH this: a highly-consolidated derived belief is
+   * "promoted" and rides the continuity packet. Standing, not kind — a promoted
+   * belief stays a MemoryArtifact, never copied into a governing directive.
+   */
   consolidationScore: number;
   activationCount: number;
   lastActivatedAt?: Date | null;

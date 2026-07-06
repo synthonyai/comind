@@ -2,6 +2,7 @@
 
 import { AgentContextData, RunAgentContext } from '@/lib/comind/agentRuntime/types';
 import { recallEntriesAndArtifacts } from '@/lib/comind/contextRecall';
+import { loadFrame } from '@/lib/comind/continuity';
 import type { RecallDeps } from '@/lib/comind/intentions';
 import type { MemoryStore } from '@/lib/comind/providers';
 import type { AttributionType } from '@/lib/comind/types';
@@ -36,12 +37,10 @@ export async function getRecallData(
     const store: MemoryStore | undefined = deps?.store;
     if (!store) throw new Error('CoMind: recall requires an injected MemoryStore (no default backend).');
 
-    // 1. Agent profile + 2. Context & active goals — via the store (core types).
-    const [agent, contextData, goals] = await Promise.all([
-        store.getAgentProfileForContext(contextId),
-        store.getContext(contextId),
-        store.listGoals({ contextId, status: 'ACTIVE' }),
-    ]);
+    // 1. Agent profile + 2. Context & active goals — the governing/foreground
+    //    frame, loaded via the shared `loadFrame` (same path the continuity
+    //    assembler uses, so the two never drift).
+    const { agent, context: contextData, goals } = await loadFrame(store, contextId);
 
     // 3. Intention-weighted search — entries AND artifacts compete in one rerank
     //    (Bucket C / P2), hydrated and split by kind in the shared recall core

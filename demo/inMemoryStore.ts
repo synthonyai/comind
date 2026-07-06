@@ -187,6 +187,37 @@ export class InMemoryMemoryStore implements MemoryStore {
     return a ? { ...a } : null;
   }
 
+  async getLatestSummary(contextId: string): Promise<MemoryArtifact | null> {
+    let latest: MemoryArtifact | null = null;
+    for (const a of this.artifacts.values()) {
+      if (a.contextId !== contextId || a.type !== "SUMMARY") continue;
+      if (!latest || a.createdAt.getTime() > latest.createdAt.getTime()) latest = a;
+    }
+    return latest ? { ...latest } : null;
+  }
+
+  async setArtifactConsolidation(id: string, consolidationScore: number): Promise<MemoryArtifact | null> {
+    const a = this.artifacts.get(id);
+    if (!a) return null;
+    const clamped = Math.max(0, Math.min(1, consolidationScore));
+    const updated: MemoryArtifact = { ...a, consolidationScore: clamped, updatedAt: new Date() };
+    this.artifacts.set(id, updated);
+    return { ...updated };
+  }
+
+  async listPromotedArtifacts(contextId: string, minConsolidation: number, limit = 8): Promise<MemoryArtifact[]> {
+    return [...this.artifacts.values()]
+      .filter(
+        (a) =>
+          a.contextId === contextId &&
+          a.type !== "SUMMARY" &&
+          a.consolidationScore >= minConsolidation,
+      )
+      .sort((x, y) => y.consolidationScore - x.consolidationScore || y.createdAt.getTime() - x.createdAt.getTime())
+      .slice(0, limit)
+      .map((a) => ({ ...a }));
+  }
+
   async createArtifact(input: NewArtifact): Promise<MemoryArtifact> {
     const now = new Date();
     const artifact: MemoryArtifact = {
@@ -217,6 +248,28 @@ export class InMemoryMemoryStore implements MemoryStore {
       if (valid.length) this.artifactGoalLinks.set(artifact.id, valid);
     }
     return { ...artifact };
+  }
+
+  async clearContextMemory(contextId: string): Promise<{ entries: number; artifacts: number }> {
+    // Episodic tier: every entry in the context.
+    let entries = 0;
+    for (const [id, e] of this.entries) {
+      if (e.contextId !== contextId) continue;
+      this.entries.delete(id);
+      entries++;
+    }
+    // Derived tier: every artifact in the context EXCEPT SUMMARY (the carryover
+    // thread survives — same exclusion rule as listPromotedArtifacts).
+    let artifacts = 0;
+    for (const [id, a] of this.artifacts) {
+      if (a.contextId !== contextId || a.type === "SUMMARY") continue;
+      this.artifacts.delete(id);
+      this.artifactSources.delete(id);
+      this.artifactGoalLinks.delete(id);
+      artifacts++;
+    }
+    // Governing memory (Context / AgentProfile / Goal) is untouched by design.
+    return { entries, artifacts };
   }
 
   // --- The living loop (activation feedback) -------------------------------

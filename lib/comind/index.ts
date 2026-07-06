@@ -13,6 +13,16 @@
 export { createComind } from "@/lib/comind/createComind";
 export type { Comind, CreateComindConfig } from "@/lib/comind/createComind";
 
+// --- Recall result shapes returned by the standalone `recall()` verb: raw
+//     entries and derived artifacts, each carrying its `intention` score. ---
+export type { RecalledEntry, RecalledArtifact } from "@/lib/comind/contextRecall";
+
+// --- The continuity assembler (v0.2 item B): the pure "wake" function and the
+//     ContinuityState packet it returns. `comind.wake()` is the instance-method
+//     shortcut; the standalone fn is for hosts/tests/the future engine. ---
+export { assembleContinuityState } from "@/lib/comind/continuity";
+export type { ContinuityState } from "@/lib/comind/continuity";
+
 // --- Provider interfaces (implement these to plug in a custom backend) + their
 //     input/output types. The default adapters are wired inside createComind. ---
 export type {
@@ -38,6 +48,12 @@ export type {
 //     consistently across backends. ---
 export { ACTIVATION, nextActivation } from "@/lib/comind/activation";
 export type { ActivationSignals, ActivatedSignals } from "@/lib/comind/activation";
+
+// --- Capture-time importance seeding (v0.2 item E). The semantic goal-alignment
+//     blend that seeds importanceScore at capture; `storeMemory` applies it, and
+//     it's exported so a host can seed importance on its own writes too. ---
+export { IMPORTANCE, seedImportanceScore, seedCaptureImportance, alignmentSimilarity } from "@/lib/comind/importance";
+export type { AlignmentTarget } from "@/lib/comind/importance";
 
 // --- Core domain types (plain TS; the Prisma schema is one mapping of these). ---
 export type {

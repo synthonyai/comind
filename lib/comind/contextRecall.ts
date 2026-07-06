@@ -45,11 +45,17 @@ export async function recallEntriesAndArtifacts(params: {
 }): Promise<{ entries: RecalledEntry[]; artifacts: RecalledArtifact[] }> {
   const { userId, contextId, query, limit, searchLimit = 8, deps } = params;
 
+  // Soft-membership recall (v0.2 decision #6): context = foreground, not box. The
+  // candidate POOL is cross-context (`contextId: null` — the store returns all
+  // contexts), while the intention `contextId` still drives the same-context
+  // boost inside `annotateWithIntention`. So own-context memories rank higher but
+  // other-context memories still compete at lower weight. (Flat bleed for now;
+  // hierarchy-aware bleed via Context.parentId is a v0.3 refinement.)
   const { results } = await searchWithIntention(
     userId,
     contextId,
     query,
-    { contextId, limit: searchLimit },
+    { contextId: null, limit: searchLimit },
     undefined,
     deps
   );
