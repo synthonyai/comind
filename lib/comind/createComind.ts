@@ -18,6 +18,7 @@ import type { MemoryStore, EmbeddingProvider, LLMProvider, NewContext, NewGoal, 
 import type { RunAgentContext } from '@/lib/comind/agentRuntime/types';
 import type { MemoryType } from '@/lib/comind/types';
 import { recallEntriesAndArtifacts } from '@/lib/comind/contextRecall';
+import { assembleContinuityState } from '@/lib/comind/continuity';
 
 export interface CreateComindConfig {
   /** Transitional tenant tag threaded into the runtime; non-tenant stores ignore it. */
@@ -91,6 +92,17 @@ export function createComind(config: CreateComindConfig) {
      * query; no embedding, no rerank. Use `recall` when you want relevance.
      */
     listMemories: (filters: MemoryEntryFilters) => store.listMemoryEntries(filters),
+
+    /**
+     * Wake — assemble the standing "state of mind" for a context BEFORE any
+     * input (v0.2 item B). Pure call: composes the governing frame + foreground
+     * (and, from item C, carryover + promoted) into a returnable
+     * ContinuityState packet and forgets it. Cold-boot and re-wake are the same
+     * call. This is the continuity door — continuity reconstructed from data,
+     * not a live object kept warm (that is the v0.3 engine).
+     */
+    wake: (contextId: string, opts?: { focusQuery?: string }) =>
+      assembleContinuityState({ userId, contextId, deps: { store, embeddings }, focusQuery: opts?.focusQuery }),
 
     /**
      * The CAMA loop: recall → assemble prompt → LLM → memory critic (write-back).

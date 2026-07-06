@@ -17,6 +17,12 @@ export type { Comind, CreateComindConfig } from "@/lib/comind/createComind";
 //     entries and derived artifacts, each carrying its `intention` score. ---
 export type { RecalledEntry, RecalledArtifact } from "@/lib/comind/contextRecall";
 
+// --- The continuity assembler (v0.2 item B): the pure "wake" function and the
+//     ContinuityState packet it returns. `comind.wake()` is the instance-method
+//     shortcut; the standalone fn is for hosts/tests/the future engine. ---
+export { assembleContinuityState } from "@/lib/comind/continuity";
+export type { ContinuityState } from "@/lib/comind/continuity";
+
 // --- Provider interfaces (implement these to plug in a custom backend) + their
 //     input/output types. The default adapters are wired inside createComind. ---
 export type {
