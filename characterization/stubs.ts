@@ -11,7 +11,13 @@
  * the Prisma-free ports of the same behavioral contract.)
  */
 
-import type { EmbeddingProvider, LLMProvider, AgentActionOutput } from "@/lib/comind";
+import type { EmbeddingProvider, LLMProvider, ExtractionOutput, LLMJob } from "@/lib/comind";
+
+/** What a stub turn returns: the reply text and the extraction output. */
+export interface StubTurn {
+  response: string;
+  memoryCritic: ExtractionOutput;
+}
 
 /**
  * Deterministic, key-free embedder: hashed bag-of-words, unit-normalized.
@@ -39,11 +45,24 @@ export class StubEmbeddings implements EmbeddingProvider {
   }
 }
 
-/** A deterministic LLMProvider — returns a fixed AgentActionOutput, no network. */
+/**
+ * A deterministic LLMProvider — streams a fixed reply and returns a fixed
+ * extraction output, no network. Records every call (job + prompt) so oracles
+ * can assert what the library sent.
+ */
 export class StubLLM implements LLMProvider {
-  constructor(private readonly out: AgentActionOutput) {}
-  async generateStructured<T>(): Promise<T> {
-    return this.out as unknown as T;
+  readonly calls: { job: LLMJob; prompt: string }[] = [];
+  constructor(private readonly out: StubTurn) {}
+  async *streamText(params: { job: LLMJob; system: string; messages: { role: string; content: string }[] }): AsyncIterable<string> {
+    this.calls.push({ job: params.job, prompt: params.system + "\n" + params.messages.map((m) => m.content).join("\n") });
+    // Two chunks, to exercise stream collection.
+    const half = Math.ceil(this.out.response.length / 2);
+    yield this.out.response.slice(0, half);
+    yield this.out.response.slice(half);
+  }
+  async generateStructured<T>(params: { job: LLMJob; prompt: string }): Promise<T> {
+    this.calls.push({ job: params.job, prompt: params.prompt });
+    return this.out.memoryCritic as unknown as T;
   }
 }
 

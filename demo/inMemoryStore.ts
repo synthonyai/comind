@@ -37,6 +37,9 @@ import type {
   GoalFilters,
   NewContext,
   NewAgentProfile,
+  NewMemoryLink,
+  MemoryLinkFilters,
+  MemoryLink,
   MemoryEntry,
   MemoryArtifact,
   Context,
@@ -77,6 +80,7 @@ export class InMemoryMemoryStore implements MemoryStore {
   private readonly contexts = new Map<string, Context>();
   private readonly agentProfiles = new Map<string, AgentProfile>();
   private readonly goals = new Map<string, Goal>();
+  private readonly links: MemoryLink[] = [];
   /** Goal-health links: artifactId -> goal links the critic wrote (not read back in v0.1). */
   private readonly artifactGoalLinks = new Map<
     string,
@@ -387,5 +391,32 @@ export class InMemoryMemoryStore implements MemoryStore {
       if (p.homeContextId === contextId) return { ...p };
     }
     return null;
+  }
+
+  async createLink(input: NewMemoryLink): Promise<MemoryLink> {
+    const existing = this.links.find((l) => l.fromId === input.fromId && l.toId === input.toId && l.type === input.type);
+    if (existing) return { ...existing };
+    const link: MemoryLink = {
+      id: randomUUID(),
+      fromId: input.fromId,
+      toId: input.toId,
+      type: input.type,
+      weight: input.weight ?? 1,
+      attributionType: input.attributionType ?? "USER_EXPLICIT",
+      rationale: input.rationale ?? null,
+      createdAt: new Date(),
+    };
+    this.links.push(link);
+    return { ...link };
+  }
+
+  async listLinks(filters: MemoryLinkFilters): Promise<MemoryLink[]> {
+    const dir = filters.direction ?? "both";
+    return this.links
+      .filter((l) =>
+        (dir !== "to" && l.fromId === filters.entryId) || (dir !== "from" && l.toId === filters.entryId))
+      .filter((l) => !filters.type || l.type === filters.type)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .map((l) => ({ ...l }));
   }
 }

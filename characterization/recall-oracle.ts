@@ -19,9 +19,9 @@
  * is observed clean). Usage: npm run characterize:recall
  */
 
-import { createComind, type AgentActionOutput } from "@/lib/comind";
+import { createComind } from "@/lib/comind";
 import { InMemoryMemoryStore } from "@/demo/inMemoryStore";
-import { StubEmbeddings, StubLLM, makeChecker } from "@/characterization/stubs";
+import { StubEmbeddings, StubLLM, makeChecker, type StubTurn } from "@/characterization/stubs";
 
 // A small, coherent world where intention reranking should visibly reorder
 // results vs. raw similarity. Indices 0/5/1/3 align with the intent/goals/watch
@@ -36,7 +36,7 @@ const MEMORIES = [
 ];
 const QUERY = "What did we decide about the storage abstraction and the library boundary?";
 
-const NULL_CRITIC: AgentActionOutput = {
+const NULL_CRITIC: StubTurn = {
   response: "STUB",
   memoryCritic: { artifacts: [], updatesToRecalledMemories: [] },
 };

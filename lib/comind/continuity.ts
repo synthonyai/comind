@@ -15,7 +15,8 @@
 // NOT here.
 //
 // The packet has four components (by *why* each is present):
-//   1. governing  — constitutive; loaded by rule (Context + AgentProfile + Goals)
+//   1. governing  — constitutive; loaded by rule (Context + AgentProfile + Goals),
+//                   plus the ROOT context's, which applies everywhere
 //   2. foreground — where the mind is pointed now (this context + active goals)
 //   3. carryover  — unfinished business ("where we left off")   [SLOT — item C]
 //   4. promoted   — derived beliefs that earned standing        [SLOT — item C]
@@ -66,6 +67,24 @@ export async function loadFrame(
   return { agent, context, goals };
 }
 
+/** A governing frame: the context, its agent profile, and its active goals. */
+export interface Frame {
+  agent: AgentProfile | null;
+  context: Context | null;
+  goals: Goal[];
+}
+
+/**
+ * The ROOT frame — the governing memory that applies in every context (the
+ * store's top-level context, `parentId === null`). Returns null when there is
+ * no root, or when `contextId` IS the root (its frame is already the main one).
+ */
+export async function loadRootFrame(store: MemoryStore, contextId: string): Promise<(Frame & { contextId: string }) | null> {
+  const rootId = await store.getRootContextId();
+  if (!rootId || rootId === contextId) return null;
+  return { contextId: rootId, ...(await loadFrame(store, rootId)) };
+}
+
 /** The assembled standing state — the return value of a wake. */
 export interface ContinuityState {
   contextId: string;
@@ -74,6 +93,16 @@ export interface ContinuityState {
   governing: {
     agentProfile: AgentProfile | null;
     context: Context | null;
+    /**
+     * The root context's governing memory — applies in every context and comes
+     * first. Null when there is no root or when this context IS the root.
+     */
+    root: {
+      contextId: string;
+      agentProfile: AgentProfile | null;
+      context: Context | null;
+      activeGoals: Goal[];
+    } | null;
   };
 
   /** #2 Foreground — where the mind is pointed now. */
@@ -120,8 +149,9 @@ export async function assembleContinuityState(params: {
   const store = deps?.store;
   if (!store) throw new Error('CoMind: assembleContinuityState requires an injected MemoryStore (no default backend).');
 
-  const [{ agent, context, goals }, summary, promotedArtifacts] = await Promise.all([
+  const [{ agent, context, goals }, root, summary, promotedArtifacts] = await Promise.all([
     loadFrame(store, contextId),
+    loadRootFrame(store, contextId),
     // Carryover — the session-end SUMMARY, loaded FIRST at wake by rule (v0.2
     // item C). "Where we left off" — makes a wake *resume* instead of *restart*.
     store.getLatestSummary(contextId),
@@ -132,7 +162,11 @@ export async function assembleContinuityState(params: {
 
   return {
     contextId,
-    governing: { agentProfile: agent, context },
+    governing: {
+      agentProfile: agent,
+      context,
+      root: root ? { contextId: root.contextId, agentProfile: root.agent, context: root.context, activeGoals: root.goals } : null,
+    },
     foreground: { contextId, activeGoals: goals },
     carryover: { summary },
     promoted: { artifacts: promotedArtifacts },

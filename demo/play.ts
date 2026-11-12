@@ -14,9 +14,9 @@
  * Run with NO DATABASE_URL: this uses the in-memory store, never Prisma.
  */
 
-import { createComind, type EmbeddingProvider, type LLMProvider, type AgentActionOutput, type RunAgentContext } from "@/lib/comind";
+import { createComind, type EmbeddingProvider, type LLMProvider, type ChatMessage } from "@/lib/comind";
 import { InMemoryMemoryStore } from "@/demo/inMemoryStore";
-import { StubEmbeddings, ScriptedLLM } from "@/demo/stubProviders";
+import { StubEmbeddings, ScriptedLLM, type ScriptedTurn } from "@/demo/stubProviders";
 import { robotDetective } from "@/demo/scenarios/robotDetective";
 import { renderWorldHeader, renderDispatchBanner, renderTurn } from "@/demo/render";
 import { createPanel } from "@/demo/panel";
@@ -73,7 +73,7 @@ function buildOfflineOutput(
   turn: Turn,
   goalKeyToId: Record<string, string>,
   recordKeyToId: Record<string, string>,
-): AgentActionOutput {
+): ScriptedTurn {
   return {
     response: turn.offline.response,
     memoryCritic: {
@@ -127,7 +127,7 @@ async function main() {
   const llm: LLMProvider = offline
     ? new ScriptedLLM()
     : new (await import("@/lib/comind/adapters/openAILLMProvider")).OpenAILLMProvider();
-  const scripted = offline ? (llm as ScriptedLLM) : undefined;
+  const scripted = offline ? (llm as unknown as ScriptedLLM) : undefined;
   const comind = createComind({ userId: "demo", store, embeddings, llm });
 
   // Record keys → entry ids, populated as observations are stored during the run.
@@ -162,8 +162,7 @@ async function main() {
     }
 
     // The per-session window. Dropped here = the reset; the store persists.
-    let chatHistory: RunAgentContext["chatHistory"] = [];
-    const firstMessage = dispatch.turns[0]?.message ?? "";
+    let chatHistory: ChatMessage[] = [];
 
     for (const turn of dispatch.turns) {
       // Record the raw observation FIRST (the host's job in both modes), so it's
@@ -183,8 +182,7 @@ async function main() {
       // Offline: hand the scripted critic this turn's output (ids now resolvable).
       scripted?.setNext(buildOfflineOutput(turn, goalKeyToId, recordKeyToId));
 
-      const context: RunAgentContext = { originalEntry: firstMessage, chatHistory };
-      const { response, trace } = await quiet(() => comind.runAgent(ctx.id, turn.message, context));
+      const { response, trace } = await quiet(() => comind.runAgent(ctx.id, turn.message, { history: chatHistory }));
       if (panel) {
         panel.renderTurn({ feed: turn.feed, response, trace });
         if (step) await waitForKey("\n  ⏎ space/enter → next turn · q → quit");

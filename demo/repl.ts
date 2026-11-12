@@ -34,7 +34,7 @@ import {
   createComind,
   type EmbeddingProvider,
   type LLMProvider,
-  type RunAgentContext,
+  type ChatMessage,
   type GoalPatch,
 } from "@/lib/comind";
 import { InMemoryMemoryStore } from "@/demo/inMemoryStore";
@@ -109,8 +109,7 @@ async function main() {
   }
 
   // --- Live session state. The window resets only when YOU call /reset. ---
-  let chatHistory: RunAgentContext["chatHistory"] = [];
-  let firstMessage = ""; // the dispatch's originalEntry — set on first turn after a reset
+  let chatHistory: ChatMessage[] = [];
   let dispatchN = 1;
   let clueN = 0;
 
@@ -118,9 +117,7 @@ async function main() {
 
   /** Run one agent turn and render it on whichever surface is active. */
   async function turn(message: string, feed: string) {
-    if (!firstMessage) firstMessage = message;
-    const context: RunAgentContext = { originalEntry: firstMessage, chatHistory };
-    const { response, trace } = await quiet(() => comind.runAgent(ctxId, message, context));
+    const { response, trace } = await quiet(() => comind.runAgent(ctxId, message, { history: chatHistory }));
 
     // Offline mints no response; show an honest recall-only note instead of "".
     const shown = response || (offline
@@ -149,7 +146,6 @@ async function main() {
 
   function reset(reason: string) {
     chatHistory = [];
-    firstMessage = "";
     dispatchN += 1;
     const label = `Dispatch ${dispatchN} — cold boot`;
     const why = reason || "You powered the detective down and back up. The window is gone; the case persists in CoMind.";

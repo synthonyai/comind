@@ -6,21 +6,19 @@
  * the `{response, trace}` decision trace (inspectability #6 + provenance #10) and
  * the token budget + eviction step.
  *
- * Deterministic because the LLM is stubbed (fixed AgentActionOutput, no network)
+ * Deterministic because the LLM is stubbed (fixed reply + extraction, no network)
  * and the embedder is the hashed stub — recall still runs for real against the
  * in-memory store, so the trace reflects what genuinely surfaced.
  *
- * Prisma-free port of the private `runagent-oracle.ts`. Scenario 1 drives the
- * public `createComind` factory; scenario 2 calls `runAgent` directly to pass the
- * `tokenBudget` (the factory closure doesn't forward it).
+ * Prisma-free port of the private `runagent-oracle.ts`. Both scenarios drive the
+ * public `createComind` factory; scenario 2 passes `tokenBudget: 0`.
  *
  * Usage: npm run characterize:runagent
  */
 
-import { createComind, type AgentActionOutput } from "@/lib/comind";
-import { runAgent } from "@/lib/comind/agentRuntime/runAgent";
+import { createComind } from "@/lib/comind";
 import { InMemoryMemoryStore } from "@/demo/inMemoryStore";
-import { StubEmbeddings, StubLLM, makeChecker } from "@/characterization/stubs";
+import { StubEmbeddings, StubLLM, makeChecker, type StubTurn } from "@/characterization/stubs";
 
 const ENTRIES = [
   "We chose Postgres over Mongo for relational integrity.",
@@ -61,7 +59,7 @@ async function seed(store: InMemoryMemoryStore, embeddings: StubEmbeddings) {
 }
 
 function stubFor(entryIds: string[], goalId: string): StubLLM {
-  const out: AgentActionOutput = {
+  const out: StubTurn = {
     response: STUB_RESPONSE,
     memoryCritic: {
       artifacts: [
@@ -148,12 +146,8 @@ async function main() {
   const store2 = new InMemoryMemoryStore();
   const emb2 = new StubEmbeddings();
   const s2 = await seed(store2, emb2);
-  const r2 = await runAgent("demo", s2.ctx.id, QUERY, undefined, {
-    store: store2,
-    embeddings: emb2,
-    llm: stubFor(s2.entryIds, s2.goal.id),
-    tokenBudget: 0,
-  });
+  const comind2 = createComind({ userId: "demo", store: store2, embeddings: emb2, llm: stubFor(s2.entryIds, s2.goal.id) });
+  const r2 = await comind2.runAgent(s2.ctx.id, QUERY, { tokenBudget: 0 });
   check("budget 0 → recalled entries evicted", r2.trace.recalled.entries.length, 0);
   check("budget 0 → recalled artifacts evicted", r2.trace.recalled.artifacts.length, 0);
   check("budget 0 → nothing activated (entries)", r2.trace.activated.entryIds.length, 0);

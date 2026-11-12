@@ -42,6 +42,10 @@ export type {
   GoalFilters,
   NewContext,
   NewAgentProfile,
+  NewMemoryLink,
+  MemoryLinkFilters,
+  LLMJob,
+  ChatMessage,
 } from "@/lib/comind/providers";
 
 // --- The activation reinforcement rule (the living loop). A custom MemoryStore
@@ -71,12 +75,20 @@ export type {
   GoalStatus,
 } from "@/lib/comind/types";
 
-// --- Agent runtime: the structured-output schema, the conversation input, and
-//     the decision trace returned by `runAgent` (inspectability + provenance). ---
-export { agentActionSchema } from "@/lib/comind/agentRuntime/types";
+// --- Agent runtime: a guide turn as two steps (`reply` streamed, then
+//     `extract`), what the guide was given, and the decision trace of a full
+//     `runAgent` turn (inspectability + provenance). ---
+export { extractionSchema } from "@/lib/comind/agentRuntime/types";
 export type {
-  AgentActionOutput,
-  RunAgentContext,
+  ExtractionOutput,
+  ExtractionResult,
+  TurnOptions,
+  GuideInput,
+  ReplyTurn,
+  TurnLens,
+  FrameLens,
+  SeenEntry,
+  SeenArtifact,
   RunAgentResult,
   DecisionTrace,
 } from "@/lib/comind/agentRuntime/types";

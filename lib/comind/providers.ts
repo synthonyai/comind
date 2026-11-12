@@ -1,30 +1,22 @@
 /**
  * CoMind provider interfaces — the three "cords" that connect the cognitive
- * layer to the outside world. A consumer embedding CoMind implements these to
- * plug in their own backend; the default implementations (Phase 3) wrap the
- * journaling app's current Prisma / HuggingFace / OpenAI code.
+ * layer to the outside world. A host embedding CoMind implements these to plug
+ * in its own backend:
  *
  *   - MemoryStore       — where memories live and how to find them
  *   - EmbeddingProvider — turn text into a vector
- *   - LLMProvider       — fill a CoMind-owned schema from a prompt
- *
- * Phase 2 of V01_IMPLEMENTATION_PLAN.md — additive, INTERFACES ONLY. Nothing
- * implements or imports these yet; Phase 3 wraps the existing code behind them.
+ *   - LLMProvider       — talk to a language model, one named job at a time
  *
  * Design notes:
- * - Scoping is `contextId`-only. "User"/tenant is the app's multi-tenancy
+ * - Scoping is `contextId`-only. "User"/tenant is the host's multi-tenancy
  *   concept, not a cognitive one — the store adapter handles any user scoping
- *   internally (e.g. the Prisma adapter keeps its `userId` filter under the
- *   hood). The library's vocabulary stays generic for non-app consumers.
- * - All methods speak in CoMind's own core types (see `./types`), never Prisma
- *   rows. The Prisma schema is one *mapping* of these types, done inside the
+ *   internally. The library's vocabulary stays generic.
+ * - All methods speak in CoMind's own core types (see `./types`), never database
+ *   rows. A database schema is one *mapping* of these types, done inside the
  *   adapter.
  * - `searchSimilar` takes a *vector*, not text: the store never embeds. The
  *   orchestration layer embeds the query (via EmbeddingProvider) and passes the
  *   vector in. This is what lets the store and embedder be swapped independently.
- * - Artifact / link / provenance store methods are intentionally NOT here yet.
- *   They are added to MemoryStore in their own phases (10 artifacts, 11
- *   provenance, 14 links) when their shape is actually understood.
  */
 
 import type { z } from 'zod';
@@ -32,6 +24,7 @@ import type {
   MemoryEntry,
   MemoryArtifact,
   MemoryArtifactType,
+  MemoryLink,
   MemoryType,
   AttributionType,
   Context,
@@ -205,6 +198,31 @@ export interface NewAgentProfile {
 }
 
 /**
+ * Fields supplied when linking one memory entry to another. `type` is the
+ * host's own edge vocabulary (e.g. "related", "follows", "contradicts") — the
+ * library attaches no meaning to it.
+ */
+export interface NewMemoryLink {
+  fromId: string;
+  toId: string;
+  type: string;
+  /** Edge strength, default 1. */
+  weight?: number;
+  /** Who made the link: the person (`USER_EXPLICIT`, default) or the mind (`AGENT_INFERRED`). */
+  attributionType?: AttributionType;
+  rationale?: string | null;
+}
+
+/** Which links to list for an entry. */
+export interface MemoryLinkFilters {
+  entryId: string;
+  /** `from` = links leaving the entry, `to` = links arriving at it, `both` (default). */
+  direction?: 'from' | 'to' | 'both';
+  /** Only links of this type. Omit for all types. */
+  type?: string;
+}
+
+/**
  * Domain-level memory persistence. The cognitive layer never sees SQL; each
  * implementation does similarity its own way (pgvector `<->`, in-memory cosine,
  * a vector DB, …) behind `searchSimilar`.
@@ -291,6 +309,15 @@ export interface MemoryStore {
   /** Reinforce recalled artifacts that were used this turn (same rule as entries). */
   activateArtifacts(ids: string[]): Promise<number>;
 
+  // --- Links between memory entries (the associative graph) ---
+  /**
+   * Create a typed edge between two entries. Creating the same (from, to, type)
+   * edge twice returns the existing link rather than duplicating it.
+   */
+  createLink(input: NewMemoryLink): Promise<MemoryLink>;
+  /** Links touching an entry, newest first. */
+  listLinks(filters: MemoryLinkFilters): Promise<MemoryLink[]>;
+
   // --- Context, goals & agent profile (so the library is self-contained) ---
   createContext(input: NewContext): Promise<Context>;
   getContext(id: string): Promise<Context | null>;
@@ -330,19 +357,48 @@ export interface EmbeddingProvider {
 }
 
 // ---------------------------------------------------------------------------
-// LLMProvider — generic structured output over a CoMind-owned schema.
+// LLMProvider — the language model, called one named job at a time.
 // ---------------------------------------------------------------------------
 
 /**
- * Produces structured output validated against a schema CoMind owns (the
- * provider just fills it). The concrete model (e.g. `gpt-4o`) lives inside the
- * implementation, not on this interface — swapping models means swapping the
- * provider, with no change to the cognitive layer.
+ * Which job the library is doing when it calls the model. Every call carries
+ * one, so a host can route jobs to different models (a strong model for
+ * replies, a cheaper one for background extraction) and record which job made
+ * which call. The library never picks a model itself.
+ *
+ * - `reply`      — the guide answering the person (streamed).
+ * - `extraction` — distilling durable meaning (decisions, insights, tasks…) from
+ *                  an exchange, after the reply.
+ *
+ * Reserved for jobs the library will add: `summary`, `coherence`, `loop-closing`.
+ */
+export type LLMJob = 'reply' | 'extraction' | 'summary' | 'coherence' | 'loop-closing';
+
+/** One message in a conversation. */
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/**
+ * The model behind the mind. CoMind owns the prompts and output schemas; the
+ * provider owns the model choice (and may choose per `job`), so swapping models
+ * never touches the cognitive layer.
  */
 export interface LLMProvider {
+  /** Fill a CoMind-owned schema from a prompt. */
   generateStructured<T>(params: {
+    job: LLMJob;
     prompt: string;
     schema: z.ZodType<T>;
     temperature?: number;
   }): Promise<T>;
+
+  /** Stream a free-text reply, chunk by chunk, for a conversation. */
+  streamText(params: {
+    job: LLMJob;
+    system: string;
+    messages: ChatMessage[];
+    temperature?: number;
+  }): AsyncIterable<string>;
 }

@@ -13,7 +13,8 @@
  *   npm run demo:prove
  */
 
-import { createComind, type EmbeddingProvider, type LLMProvider, type AgentActionOutput } from "@/lib/comind";
+import { createComind, type EmbeddingProvider, type LLMProvider } from "@/lib/comind";
+import type { ScriptedTurn } from "@/demo/stubProviders";
 import { InMemoryMemoryStore } from "@/demo/inMemoryStore";
 
 // --- A deterministic, key-free embedder: hashed bag-of-words, unit-normalized.
@@ -35,8 +36,9 @@ class StubEmbeddings implements EmbeddingProvider {
 }
 
 class StubLLM implements LLMProvider {
-  constructor(private readonly out: AgentActionOutput) {}
-  async generateStructured<T>(): Promise<T> { return this.out as unknown as T; }
+  constructor(private readonly out: ScriptedTurn) {}
+  async *streamText(): AsyncIterable<string> { yield this.out.response; }
+  async generateStructured<T>(): Promise<T> { return this.out.memoryCritic as unknown as T; }
 }
 
 const failures: string[] = [];

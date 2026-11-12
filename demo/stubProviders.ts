@@ -4,12 +4,18 @@
  * - `StubEmbeddings`: hashed bag-of-words, unit-normalized. Shared words → closer
  *   vectors, so recall is meaningful (if synthetic). Same construction as
  *   proveBoundary.ts — kept here so the playable demo can share it.
- * - `ScriptedLLM`: replays a queue of pre-authored `AgentActionOutput`s, one per
- *   `runAgent` call, in turn order. The real-provider path uses a live LLM
+ * - `ScriptedLLM`: replays a pre-authored `ScriptedTurn` (reply + critic output)
+ *   per `runAgent` call, in turn order. The real-provider path uses a live LLM
  *   instead; this is only for reproducible, no-key runs.
  */
 
-import type { EmbeddingProvider, LLMProvider, AgentActionOutput } from "@/lib/comind";
+import type { EmbeddingProvider, LLMProvider, ExtractionOutput } from "@/lib/comind";
+
+/** One scripted turn: the guide's reply and what extraction returns. */
+export interface ScriptedTurn {
+  response: string;
+  memoryCritic: ExtractionOutput;
+}
 
 export class StubEmbeddings implements EmbeddingProvider {
   readonly dimensions = 64;
@@ -34,17 +40,21 @@ export class StubEmbeddings implements EmbeddingProvider {
  * (provenance can't be resolved up front, since the ids don't exist yet).
  */
 export class ScriptedLLM implements LLMProvider {
-  private pending: AgentActionOutput | null = null;
-  private readonly empty: AgentActionOutput = {
+  private pending: ScriptedTurn | null = null;
+  private readonly empty: ScriptedTurn = {
     response: "",
     memoryCritic: { artifacts: [], updatesToRecalledMemories: [] },
   };
-  setNext(output: AgentActionOutput): void {
+  setNext(output: ScriptedTurn): void {
     this.pending = output;
+  }
+  // A turn calls `reply` (streamText) first, then `extraction` (generateStructured).
+  async *streamText(): AsyncIterable<string> {
+    yield (this.pending ?? this.empty).response;
   }
   async generateStructured<T>(): Promise<T> {
     const out = this.pending ?? this.empty;
     this.pending = null;
-    return out as unknown as T;
+    return out.memoryCritic as unknown as T;
   }
 }

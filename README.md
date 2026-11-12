@@ -142,8 +142,11 @@ The v0.2 demos need no keys.
 | `checkpoint(contextId, summary, opts?)` | Save the open thread so the next wake can resume from it. |
 | `promote(artifactId)` / `demote(artifactId)` | Keep a conclusion present across sessions, or let it go. |
 | `clear(contextId)` | Forget learned/session memories while keeping profile, goals, and continuity state. |
-| `runAgent(contextId, message, ctx?)` | Run the full loop and return `{ response, trace }`. |
-| `storeMemory(params)` | Store a raw observation. Importance is judged against the agent's current goals. |
+| `reply(contextId, message, opts?)` | A guide turn, step 1: recall, then stream the reply. Returns `{ input, stream }` — `input` is exactly what the guide was given. |
+| `extract(input, response)` | A guide turn, step 2: distil decisions, insights, tasks… from the exchange and store them with their sources. You decide when it runs. |
+| `runAgent(contextId, message, opts?)` | Both steps without streaming; returns `{ response, trace, input }`. |
+| `link(...)` / `listLinks(...)` | Connect two memories with a typed edge of your own vocabulary, and read those edges. |
+| `storeMemory(params)` | Store a raw observation (optionally linked to earlier ones). Importance is judged against the agent's current goals. |
 | `createContext` / `createGoal` / `createAgentProfile` | Set up who the agent is and what it is working toward. |
 
 For hosts and tests, the wake logic is also exported as a standalone function:
@@ -205,7 +208,7 @@ You embed CoMind Core by implementing three providers and passing them to `creat
 |---|---|
 | `MemoryStore` | Where memories live and how to find them. |
 | `EmbeddingProvider` | Converts text into vectors. |
-| `LLMProvider` | Fills CoMind-owned schemas from prompts. |
+| `LLMProvider` | Talks to a language model: fills CoMind-owned schemas and streams replies. Every call names its job (`reply`, `extraction`…), so you can use a different model per job. |
 
 ```ts
 import { createComind } from "@comind-ai/core";
@@ -223,7 +226,7 @@ const { response, trace } = await comind.runAgent(
 );
 ```
 
-Default adapters for HuggingFace embeddings and OpenAI structured output ship in
+Default adapters for HuggingFace embeddings and OpenAI ship in
 `lib/comind/adapters/`. You can import and inject those, or write your own.
 
 ---

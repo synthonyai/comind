@@ -26,7 +26,7 @@ createComind({
   userId: "boundary-check",
   store,
   embeddings: { dimensions: 4, embed: async () => [0, 0, 0, 0], embedQuery: async () => [0, 0, 0, 0] },
-  llm: { generateStructured: async () => ({}) as never },
+  llm: { generateStructured: async () => ({}) as never, streamText: async function* () {} },
 });
 
 const bad = offenders();

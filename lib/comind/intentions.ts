@@ -142,7 +142,7 @@ async function loadContextSignals(
     store.listGoals({ contextId, status: 'ACTIVE' }),
   ]);
 
-  // Seed intent — north star for the context, weighted same as a high-priority goal
+  // Seed intent — the guiding intent of the context, weighted same as a high-priority goal
   if (context?.seedIntent) {
     applyTerms(dict, [context.seedIntent], WEIGHTS.GOAL_BASE, { kind: 'seedIntent', contextId, root });
   }

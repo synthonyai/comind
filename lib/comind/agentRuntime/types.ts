@@ -1,107 +1,170 @@
-// lib/agentRuntime/types.ts
+// lib/comind/agentRuntime/types.ts
 import { z } from 'zod';
 import type { AttributionType } from '@/lib/comind/types';
+import type { ChatMessage } from '@/lib/comind/providers';
+import type { RecallExplanation } from '@/lib/comind/intentions';
 
-/**
- * Zod schema for the structured output from the external LLM.
- * This provides runtime validation.
- */
-/** The seven first-class artifact types (mirrors prisma `MemoryArtifactType`). */
+/** The seven first-class artifact types (mirrors the schema's `MemoryArtifactType`). */
 export const artifactTypeEnum = z.enum([
     'DECISION', 'INSIGHT', 'FACT', 'TASK', 'QUESTION', 'CONSTRAINT', 'SUMMARY',
 ]);
 
-export const agentActionSchema = z.object({
-    response: z.string(),
-    memoryCritic: z.object({
-        // 0..n typed artifacts the critic chooses to derive this turn. An empty
-        // array means "nothing genuinely new emerged" (replaces isImportant:false).
-        artifacts: z.array(z.object({
-            type: artifactTypeEnum,
-            content: z.string(),
-            title: z.string().optional(),
-            confidence: z.number().min(0).max(1).optional(),
-            tags: z.array(z.string()).optional(),
-            // Which recalled entries (by [ID:…]) this artifact derives from.
-            // Omitted → falls back to all recalled entries at the call site.
-            sourceEntryIds: z.array(z.string()).optional(),
-            // Which goal(s) this artifact serves (by goal id shown in the prompt),
-            // how strongly, and why — feeds goal-health. Invalid ids are dropped.
-            goalLinks: z.array(z.object({
-                goalId: z.string(),
-                strength: z.number().min(0).max(1).optional(),
-                rationale: z.string().optional(),
-            })).optional(),
-        })).default([]),
-        updatesToRecalledMemories: z.array(z.object({
-            id: z.string(),
-            newImportanceScore: z.number().min(0).max(1),
+/**
+ * Structured output of the `extraction` job — the memory critic. It reads an
+ * exchange AFTER the reply and distils its durable meaning.
+ */
+export const extractionSchema = z.object({
+    // 0..n typed artifacts the critic chooses to derive. An empty array means
+    // "nothing genuinely new emerged".
+    artifacts: z.array(z.object({
+        type: artifactTypeEnum,
+        content: z.string(),
+        title: z.string().optional(),
+        confidence: z.number().min(0).max(1).optional(),
+        tags: z.array(z.string()).optional(),
+        // Which entries (by [ID:…]) this artifact derives from. Omitted → falls
+        // back to the turn's focus entries, else all recalled entries.
+        sourceEntryIds: z.array(z.string()).optional(),
+        // Which goal(s) this artifact serves (by goal id shown in the prompt),
+        // how strongly, and why — feeds goal-health. Invalid ids are dropped.
+        goalLinks: z.array(z.object({
+            goalId: z.string(),
+            strength: z.number().min(0).max(1).optional(),
+            rationale: z.string().optional(),
         })).optional(),
-    }),
+    })).default([]),
+    updatesToRecalledMemories: z.array(z.object({
+        id: z.string(),
+        newImportanceScore: z.number().min(0).max(1),
+    })).optional(),
 });
 
-/**
- * TypeScript type inferred from the Zod schema.
- * Use this for type annotations throughout your code.
- */
-export type AgentActionOutput = z.infer<typeof agentActionSchema>;
+/** The validated output of the `extraction` job. */
+export type ExtractionOutput = z.infer<typeof extractionSchema>;
 
-export interface RunAgentContext {
-    originalEntry: string
-    chatHistory: Array<{ role: 'user' | 'assistant', content: string }>
+/** Options for a guide turn (`reply` / `runAgent`). */
+export interface TurnOptions {
+    /** The conversation so far, oldest first, NOT including the new message. */
+    history?: ChatMessage[];
+    /**
+     * Entries this turn is about (e.g. a note the person just wrote and is now
+     * discussing). They are kept out of recall and recent context — they are
+     * already in the conversation — and are the default sources for anything
+     * extraction derives.
+     */
+    focusEntryIds?: string[];
+    /** Token budget for the recall-driven memory blocks (default 4000). */
+    tokenBudget?: number;
+    /**
+     * The host application's standing instructions for the guide — its house
+     * rules (tone, how to raise a clash, what never to do). Shown before the
+     * governing frames, apart from what the person set in their contexts.
+     */
+    instructions?: string[];
+}
+
+/** The governing lens of one frame, as shown to the guide. */
+export interface FrameLens {
+    seedIntent: string | null;
+    values: string[];
+    directives: string[];
+    watchWords: string[];
+    /** Goals with status ACTIVE, highest weight first. */
+    activeGoals: { id: string; title: string; weight: number }[];
 }
 
 /**
- * The decision trace (Bucket E / step 2 — inspectability #6 + provenance #10).
- * Makes a runAgent turn explainable: WHAT memory shaped the response (recalled),
- * WHAT the critic concluded and saved (produced), and WHICH memories were
- * reinforced (activated). The host can surface this to show "why it said that"
- * and "what it learned", without re-querying the store.
+ * The governing lens a turn was weighted against (inspectability). `root` is
+ * the root context's lens — it applies in every context and comes first; null
+ * when there is no root or the turn's context IS the root.
+ */
+export interface TurnLens extends FrameLens {
+    root: (FrameLens & { contextId: string }) | null;
+}
+
+/** A memory entry as the guide saw it. */
+export interface SeenEntry {
+    id: string;
+    content: string;
+    timestamp: Date;
+    /** Intention-rerank score (0 for recent-context entries, which aren't ranked). */
+    intention: number;
+    confidence: number;
+    attribution: AttributionType;
+    /** Why it was recalled (score, signals, governing items that boosted it). */
+    why?: RecallExplanation;
+}
+
+/** A recalled derived artifact as the guide saw it. */
+export interface SeenArtifact {
+    id: string;
+    type: string;
+    content: string;
+    createdAt: Date;
+    intention: number;
+    confidence: number;
+    why?: RecallExplanation;
+}
+
+/**
+ * Everything the guide was given for one turn — the exact prompt plus the
+ * memory that went into it. Returned by `reply` (so a host can show "what the
+ * guide saw") and passed back to `extract`. Plain data: safe to store or log.
+ */
+export interface GuideInput {
+    contextId: string;
+    message: string;
+    history: ChatMessage[];
+    /** The entries this turn is about (`focusEntryIds`), kept out of recall. */
+    focus: SeenEntry[];
+    /** The exact system prompt and messages sent to the model. */
+    prompt: { system: string; messages: ChatMessage[] };
+    lens: TurnLens;
+    /** Recalled by meaning + intention (after the token budget). */
+    recalled: { entries: SeenEntry[]; artifacts: SeenArtifact[] };
+    /** The most recent entries in this context (after the token budget). */
+    recent: SeenEntry[];
+}
+
+/** A guide reply in progress: what it was given, and the streamed text. */
+export interface ReplyTurn {
+    input: GuideInput;
+    /** The reply, chunk by chunk. Consume it once. */
+    stream: AsyncIterable<string>;
+}
+
+/** What `extract` derived and wrote back. */
+export interface ExtractionResult {
+    artifacts: {
+        id: string;
+        type: string;
+        title?: string;
+        preview: string;
+        /** Provenance: the source entries this artifact derived from. */
+        sourceEntryIds: string[];
+        /** Goal-health links the critic requested (invalid ids are dropped on write). */
+        goalLinks: { goalId: string; strength?: number; rationale?: string }[];
+    }[];
+    memoryUpdates: { id: string; newImportanceScore: number }[];
+}
+
+/**
+ * The decision trace of a full turn (`runAgent`): WHAT memory shaped the reply
+ * (recalled), WHAT extraction concluded and saved (produced), and WHICH memories
+ * were reinforced (activated).
  */
 export interface DecisionTrace {
+    lens: TurnLens;
     /**
-     * The standing intention lens this turn was weighted against (inspectability
-     * #8 + standing-identity #13). `seedIntent` + the identity (`values`,
-     * `directives`, `watchWords`) are the PERSISTENT core — immutable in v0.1, so
-     * they hold steady across resets and goal-lifecycle changes. `activeGoals` is
-     * the shifting sub-focus: when a goal completes it leaves this set and recall
-     * re-weights beneath an unchanged core (the #4/#13 focus-shift). Built from
-     * data already fetched for the prompt — no extra store reads.
-     */
-    lens: {
-        seedIntent: string | null;
-        values: string[];
-        directives: string[];
-        watchWords: string[];
-        /** Goals with status ACTIVE — the only part of the lens with a lifecycle. */
-        activeGoals: { title: string; weight: number }[];
-    };
-    /**
-     * What surfaced into the prompt and shaped the response. Each recalled item
-     * carries the schema's belief signals so the host can show HOW SURE the mind
-     * is (`confidence`, #11) and — for raw entries — whether it was TOLD this or
-     * FIGURED IT OUT (`attribution`, #10). Artifacts carry no `attribution`: a
-     * derived artifact has no `attributionType` column (schema) because it IS the
-     * "figured out itself" side by construction — the host renders it as inferred.
+     * What surfaced into the prompt. Raw entries carry `attribution` (was it
+     * TOLD this or did it FIGURE IT OUT); derived artifacts are inferred by
+     * construction.
      */
     recalled: {
         entries: { id: string; preview: string; intention: number; confidence: number; attribution: AttributionType }[];
         artifacts: { id: string; type: string; preview: string; intention: number; confidence: number }[];
     };
-    /** What the memory critic derived and wrote back this turn. */
-    produced: {
-        artifacts: {
-            id: string;
-            type: string;
-            title?: string;
-            preview: string;
-            /** Provenance (#10): the source entries this artifact derived from. */
-            sourceEntryIds: string[];
-            /** Goal-health links the critic requested (invalid ids are dropped on write). */
-            goalLinks: { goalId: string; strength?: number; rationale?: string }[];
-        }[];
-        memoryUpdates: { id: string; newImportanceScore: number }[];
-    };
+    produced: ExtractionResult;
     /** Operational-signal reinforcement (the living loop) applied this turn. */
     activated: { entryIds: string[]; artifactIds: string[] };
 }
@@ -109,15 +172,15 @@ export interface DecisionTrace {
 export interface RunAgentResult {
     response: string;
     trace: DecisionTrace;
+    input: GuideInput;
 }
 
-/**
- * Interface representing the structured context data needed by the Agent Runtime.
- */
-export interface AgentContextData {
-    // Core AgentProfile fields only. App-layer styling (tone, formality,
-    // detailLevel, referenceModels, …) is the host's concern and is no longer
-    // part of the library's cognitive prompt.
+// ---------------------------------------------------------------------------
+// Internal: the assembled data a turn's prompts are built from.
+// ---------------------------------------------------------------------------
+
+/** One frame's governing data, as the prompt needs it. */
+export interface FrameData {
     agentProfile: {
         name: string;
         description: string;
@@ -136,9 +199,15 @@ export interface AgentContextData {
         values: string[];
     } | null;
     goals: { id: string; title: string; status: string; weight: number }[];
-    intentionWeighted: { id: string; content: string; intention: number; timestamp: Date; confidence: number; attribution: AttributionType }[];
-    recentContext: { id: string; content: string; timestamp: Date; confidence: number; attribution: AttributionType }[];
-    artifacts: { id: string; type: string; content: string; confidence: number; createdAt: Date; intention: number }[];
-    userMessage: string;
-    conversationContext?: RunAgentContext;
+}
+
+/** The structured data a guide turn is assembled from (internal). */
+export interface AgentContextData extends FrameData {
+    /** The root context's frame — applies everywhere. Null when none / this IS the root. */
+    root: (FrameData & { contextId: string }) | null;
+    intentionWeighted: SeenEntry[];
+    recentContext: SeenEntry[];
+    artifacts: SeenArtifact[];
+    /** The entries this turn is about (kept out of recall; shown to extraction). */
+    focusEntries: SeenEntry[];
 }

@@ -1,94 +1,107 @@
-// lib/agentRuntime/dataFetcher.ts
+// lib/comind/agentRuntime/dataFetcher.ts
 
-import { AgentContextData, RunAgentContext } from '@/lib/comind/agentRuntime/types';
+import type { AgentContextData, FrameData, SeenEntry } from '@/lib/comind/agentRuntime/types';
 import { recallEntriesAndArtifacts } from '@/lib/comind/contextRecall';
-import { loadFrame } from '@/lib/comind/continuity';
+import { loadFrame, loadRootFrame, type Frame } from '@/lib/comind/continuity';
 import type { RecallDeps } from '@/lib/comind/intentions';
 import type { MemoryStore } from '@/lib/comind/providers';
-import type { AttributionType } from '@/lib/comind/types';
+import type { MemoryEntry } from '@/lib/comind/types';
 
-// Carries the schema's belief signals (`confidence` #11, `attributionType` #10)
-// through to the trace alongside the intention score — they're already hydrated
-// on every recalled/recent entry, so this is a pass-through, not a new read.
-function formatMemoryEntry(
-    entry: { id: string; content: string; timestamp: Date; confidence: number; attributionType: AttributionType },
-    intentionScore: number = 0
-): { id: string; content: string; intention: number; timestamp: Date; confidence: number; attribution: AttributionType } {
+/** How many recent entries a turn sees from its own context. */
+const RECENT_LIMIT = 5;
+
+// Carries the schema's belief signals (`confidence`, `attributionType`) through
+// alongside the intention score — already hydrated on every entry.
+function seenEntry(entry: MemoryEntry & { why?: SeenEntry['why'] }, intention = 0): SeenEntry {
     return {
         id: entry.id,
         content: entry.content,
-        intention: intentionScore,
         timestamp: entry.timestamp,
+        intention,
         confidence: entry.confidence,
         attribution: entry.attributionType,
+        ...(entry.why ? { why: entry.why } : {}),
     };
 }
 
-export async function getRecallData(
-    userId: string,
-    contextId: string,
-    userMessage: string,
-    context?: RunAgentContext,
-    deps?: RecallDeps
-): Promise<AgentContextData> {
-
-    // Everything routes through the injected store. The store is required — the
-    // library ships no default backend (the host injects it, e.g. via createComind).
-    const store: MemoryStore | undefined = deps?.store;
-    if (!store) throw new Error('CoMind: recall requires an injected MemoryStore (no default backend).');
-
-    // 1. Agent profile + 2. Context & active goals — the governing/foreground
-    //    frame, loaded via the shared `loadFrame` (same path the continuity
-    //    assembler uses, so the two never drift).
-    const { agent, context: contextData, goals } = await loadFrame(store, contextId);
-
-    // 3. Intention-weighted search — entries AND artifacts compete in one rerank
-    //    (Bucket C / P2), hydrated and split by kind in the shared recall core
-    //    (Bucket E / step 1). Runtime path consumes ALL survivors (no final cap).
-    const { entries, artifacts } = await recallEntriesAndArtifacts({
-        userId, contextId, query: userMessage, deps,
-    });
-
-    const intentionWeighted = entries.map((e) => formatMemoryEntry(e, e.intention));
-    const artifactRecords = artifacts.map((a) => ({
-        id: a.id, type: a.type, content: a.content, confidence: a.confidence, createdAt: a.createdAt, intention: a.intention,
-    }));
-
-    // 4. Recent context — most recent entries in this context.
-    const recentContextEntries = await store.listMemoryEntries({ contextId, limit: 5 });
-    const recentContext = recentContextEntries.map(entry => formatMemoryEntry(entry));
-
+/** Shape one governing frame for the prompt. Goals: highest weight first. */
+function frameData({ agent, context, goals }: Frame): FrameData {
     return {
-        // Only the core AgentProfile fields drive the cognitive prompt. App-layer
-        // styling (tone/formality/detailLevel/etc.) is the host's concern and no
-        // longer reaches the library prompt.
+        // Only the core AgentProfile fields drive the cognitive prompt. Styling
+        // (tone, formality…) is the host's concern.
         agentProfile: agent ? {
             name: agent.name || '',
             description: agent.description || '',
             directives: agent.directives || [],
             watchWords: agent.watchWords || [],
         } : null,
-        context: contextData ? {
-            seedIntent: contextData.seedIntent || null,
-            whyItMatters: contextData.whyItMatters || null,
-            description: contextData.description || null,
-            summary: contextData.summary || null,
-            direction: contextData.direction || null,
-            themes: contextData.themes || [],
-            constraints: contextData.constraints || [],
-            assumptions: contextData.assumptions || [],
-            values: contextData.values || [],
+        context: context ? {
+            seedIntent: context.seedIntent || null,
+            whyItMatters: context.whyItMatters || null,
+            description: context.description || null,
+            summary: context.summary || null,
+            direction: context.direction || null,
+            themes: context.themes || [],
+            constraints: context.constraints || [],
+            assumptions: context.assumptions || [],
+            values: context.values || [],
         } : null,
-        goals: goals.map(g => ({
-            id: g.id,
-            title: g.title,
-            status: g.status,
-            weight: g.weight,
+        goals: [...goals]
+            .sort((a, b) => b.weight - a.weight)
+            .map(g => ({ id: g.id, title: g.title, status: g.status, weight: g.weight })),
+    };
+}
+
+/**
+ * Gather everything a guide turn is built from: this context's frame, the root
+ * context's frame (applies everywhere), intention-weighted recall (with `why`),
+ * recent entries, and the focus entries the turn is about.
+ */
+export async function getRecallData(params: {
+    userId: string;
+    contextId: string;
+    message: string;
+    focusEntryIds?: string[];
+    deps: RecallDeps;
+}): Promise<AgentContextData> {
+    const { userId, contextId, message, deps } = params;
+    const focusIds = new Set(params.focusEntryIds ?? []);
+
+    // Everything routes through the injected store — the library ships no default backend.
+    const store: MemoryStore | undefined = deps?.store;
+    if (!store) throw new Error('CoMind: recall requires an injected MemoryStore (no default backend).');
+
+    const [frame, root, recall, recent, focus] = await Promise.all([
+        // Governing/foreground frames via the same loaders `wake()` uses, so the
+        // guide and the continuity packet never drift.
+        loadFrame(store, contextId),
+        loadRootFrame(store, contextId),
+        // Entries AND artifacts compete in one rerank. The pool is widened by the
+        // number of focus entries, which are dropped below (they're likely the
+        // closest match to the message — they are what it's about).
+        recallEntriesAndArtifacts({
+            userId, contextId, query: message, explain: true, deps,
+            searchLimit: 8 + focusIds.size,
+        }),
+        store.listMemoryEntries({ contextId, limit: RECENT_LIMIT + focusIds.size }),
+        Promise.all([...focusIds].map(id => store.getMemoryEntry(id))),
+    ]);
+
+    return {
+        ...frameData(frame),
+        root: root ? { contextId: root.contextId, ...frameData(root) } : null,
+        intentionWeighted: recall.entries
+            .filter(e => !focusIds.has(e.id))
+            .map(e => seenEntry(e, e.intention)),
+        artifacts: recall.artifacts.map(a => ({
+            id: a.id, type: a.type, content: a.content, confidence: a.confidence,
+            createdAt: a.createdAt, intention: a.intention,
+            ...(a.why ? { why: a.why } : {}),
         })),
-        intentionWeighted,
-        recentContext,
-        artifacts: artifactRecords,
-        userMessage,
-        conversationContext: context
+        recentContext: recent
+            .filter(e => !focusIds.has(e.id))
+            .slice(0, RECENT_LIMIT)
+            .map(e => seenEntry(e)),
+        focusEntries: focus.filter((e): e is MemoryEntry => !!e).map(e => seenEntry(e)),
     };
 }

@@ -1,43 +1,49 @@
 /**
- * OpenAILLMProvider — the default LLMProvider, wrapping the same Vercel-AI
- * `generateObject` call as `lib/llm.ts`, but generic over the schema CoMind
- * passes in (the provider just fills it).
- *
- * Phase 3 of V01_IMPLEMENTATION_PLAN.md — additive and DORMANT. The concrete
- * model lives HERE, not on the interface: it owns the `gpt-4o` default, so
- * swapping models means swapping/configuring this provider with no change to
- * the cognitive layer.
+ * OpenAILLMProvider — an LLMProvider over OpenAI via the Vercel AI SDK. Fills
+ * the schema CoMind passes in (`generateStructured`) and streams replies
+ * (`streamText`). The model lives HERE, not on the interface; `models` can route
+ * individual jobs to different models.
  */
 
 import { openai } from '@ai-sdk/openai';
-import { generateObject } from 'ai';
+import { generateObject, streamText } from 'ai';
 import type { z } from 'zod';
-import type { LLMProvider } from '@/lib/comind/providers';
+import type { ChatMessage, LLMJob, LLMProvider } from '@/lib/comind/providers';
 
 export interface OpenAILLMProviderOptions {
-  /** Defaults to `gpt-4o` — the model previously hardcoded in runAgent/llm.ts. */
+  /** Default model for every job. Defaults to `gpt-4o`. */
   model?: string;
+  /** Per-job overrides, e.g. `{ extraction: 'gpt-4o-mini' }`. */
+  models?: Partial<Record<LLMJob, string>>;
   /** Default sampling temperature when a call doesn't override it. */
   temperature?: number;
 }
 
 export class OpenAILLMProvider implements LLMProvider {
   private readonly model: string;
+  private readonly models: Partial<Record<LLMJob, string>>;
   private readonly defaultTemperature: number;
 
   constructor(options: OpenAILLMProviderOptions = {}) {
     this.model = options.model ?? 'gpt-4o';
+    this.models = options.models ?? {};
     this.defaultTemperature = options.temperature ?? 0.1;
   }
 
+  private modelFor(job: LLMJob): string {
+    return this.models[job] ?? this.model;
+  }
+
   async generateStructured<T>(params: {
+    job: LLMJob;
     prompt: string;
     schema: z.ZodType<T>;
     temperature?: number;
   }): Promise<T> {
+    const model = this.modelFor(params.job);
     try {
       const result = await generateObject({
-        model: openai(this.model),
+        model: openai(model),
         schema: params.schema,
         prompt: params.prompt,
         temperature: params.temperature ?? this.defaultTemperature,
@@ -45,8 +51,23 @@ export class OpenAILLMProvider implements LLMProvider {
       // result.object is already validated against the schema.
       return result.object;
     } catch (error) {
-      console.error(`Error calling external LLM (${this.model}) for Agent Runtime:`, error);
-      throw new Error('External LLM call failed to produce a structured response.');
+      console.error(`CoMind: ${params.job} call to ${model} failed:`, error);
+      throw new Error(`CoMind: the ${params.job} call failed to produce a structured response.`);
     }
+  }
+
+  async *streamText(params: {
+    job: LLMJob;
+    system: string;
+    messages: ChatMessage[];
+    temperature?: number;
+  }): AsyncIterable<string> {
+    const result = streamText({
+      model: openai(this.modelFor(params.job)),
+      system: params.system,
+      messages: params.messages,
+      temperature: params.temperature ?? this.defaultTemperature,
+    });
+    yield* result.textStream;
   }
 }

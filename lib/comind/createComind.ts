@@ -3,7 +3,7 @@
  * into a single instance exposing the public methods.
  *
  * Prisma-free by construction: this module imports ONLY types (erased at
- * runtime). The runtime is pulled in via dynamic `import()` inside `runAgent`,
+ * runtime). The runtime is pulled in via dynamic `import()` inside the turn verbs,
  * and every other method calls straight through to the injected providers. There
  * is NO built-in backend — a consumer embeds CoMind by implementing the three
  * provider interfaces (MemoryStore, EmbeddingProvider, LLMProvider) and passing
@@ -14,8 +14,8 @@
  * stores (e.g. the in-memory reference store) ignore it.
  */
 
-import type { MemoryStore, EmbeddingProvider, LLMProvider, NewContext, NewGoal, NewAgentProfile, MemoryEntryFilters } from '@/lib/comind/providers';
-import type { RunAgentContext } from '@/lib/comind/agentRuntime/types';
+import type { MemoryStore, EmbeddingProvider, LLMProvider, NewContext, NewGoal, NewAgentProfile, MemoryEntryFilters, NewMemoryLink, MemoryLinkFilters } from '@/lib/comind/providers';
+import type { TurnOptions, GuideInput } from '@/lib/comind/agentRuntime/types';
 import type { MemoryType, AttributionType } from '@/lib/comind/types';
 import { recallEntriesAndArtifacts } from '@/lib/comind/contextRecall';
 import { assembleContinuityState, PROMOTION } from '@/lib/comind/continuity';
@@ -28,7 +28,7 @@ export interface CreateComindConfig {
   store: MemoryStore;
   /** Text → vector. Required — there is no default backend. */
   embeddings: EmbeddingProvider;
-  /** Structured output over a CoMind-owned schema. Required — there is no default backend. */
+  /** The language model, called one named job at a time. Required — there is no default backend. */
   llm: LLMProvider;
 }
 
@@ -56,6 +56,11 @@ export function createComind(config: CreateComindConfig) {
       importanceScore?: number;
       attributionType?: AttributionType;
       confidence?: number;
+      /**
+       * Link the new entry to existing ones, in the host's own edge vocabulary
+       * (e.g. `{ toId, type: 'follows' }`). Created after the entry, from it.
+       */
+      links?: { toId: string; type: string; weight?: number; rationale?: string }[];
     }) => {
       const embedding = await embeddings.embed(params.content);
       const importanceScore =
@@ -67,7 +72,7 @@ export function createComind(config: CreateComindConfig) {
           confidence: params.confidence,
           deps: { store, embeddings },
         }));
-      return store.createMemoryEntry({
+      const entry = await store.createMemoryEntry({
         contextId: params.contextId,
         type: params.type ?? 'NOTE',
         content: params.content,
@@ -78,7 +83,17 @@ export function createComind(config: CreateComindConfig) {
         importanceScore,
         embedding,
       });
+      for (const link of params.links ?? []) {
+        await store.createLink({ fromId: entry.id, attributionType: 'USER_EXPLICIT', ...link });
+      }
+      return entry;
     },
+
+    /** Link two memory entries with a typed edge (the host's own vocabulary). */
+    link: (input: NewMemoryLink) => store.createLink(input),
+
+    /** Links touching an entry — leaving it, arriving at it, or both (default). */
+    listLinks: (filters: MemoryLinkFilters) => store.listLinks(filters),
 
     /**
      * Intention-ranked recall WITHOUT a full agent turn — the standalone read
@@ -171,14 +186,34 @@ export function createComind(config: CreateComindConfig) {
       assembleContinuityState({ userId, contextId, deps: { store, embeddings }, focusQuery: opts?.focusQuery }),
 
     /**
-     * The CAMA loop: recall → assemble prompt → LLM → memory critic (write-back).
-     * Returns `{ response, trace }` — the trace is the inspectable record of what
-     * was recalled, produced, and reinforced. Lazily imported so merely importing
-     * the barrel pulls in nothing but types.
+     * Step 1 of a guide turn — the reply. Recalls (with `why`), assembles the
+     * prompt (root context first), reinforces what was recalled, and streams the
+     * answer with the `reply` job. Returns `{ input, stream }`: `input` is
+     * exactly what the guide was given; consume `stream` once for the text.
+     * Lazily imported so importing the barrel pulls in nothing but types.
      */
-    runAgent: async (contextId: string, userMessage: string, context?: RunAgentContext) => {
-      const { runAgent } = await import('@/lib/comind/agentRuntime/runAgent');
-      return runAgent(userId, contextId, userMessage, context, { store, embeddings, llm });
+    reply: async (contextId: string, message: string, opts?: TurnOptions) => {
+      const { reply } = await import('@/lib/comind/agentRuntime/turn');
+      return reply(userId, contextId, message, opts, { store, embeddings, llm });
+    },
+
+    /**
+     * Step 2 of a guide turn — extraction. Pass the `input` from `reply` and the
+     * full reply text; distils decisions, insights, tasks… with the `extraction`
+     * job and writes them back with provenance. The host decides when to run it.
+     */
+    extract: async (input: GuideInput, response: string) => {
+      const { extract } = await import('@/lib/comind/agentRuntime/turn');
+      return extract(input, response, { store, embeddings, llm });
+    },
+
+    /**
+     * A full turn without streaming — `reply` then `extract`. Returns
+     * `{ response, trace, input }`.
+     */
+    runAgent: async (contextId: string, message: string, opts?: TurnOptions) => {
+      const { runAgent } = await import('@/lib/comind/agentRuntime/turn');
+      return runAgent(userId, contextId, message, opts, { store, embeddings, llm });
     },
 
     createContext: (input: NewContext) => store.createContext(input),
