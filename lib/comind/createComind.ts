@@ -91,11 +91,13 @@ export function createComind(config: CreateComindConfig) {
      *
      * - `limit` caps the hydrated rows (omit to return all survivors).
      * - `searchLimit` (default 8) is the per-table candidate pool before rerank.
+     * - `explain` attaches `why` to each row: the score, the six signals, and the
+     *   governing items (goal, value, seed intent…) that boosted it. Same ranking.
      */
     recall: (
       contextId: string,
       query: string,
-      opts?: { limit?: number; searchLimit?: number }
+      opts?: { limit?: number; searchLimit?: number; explain?: boolean }
     ) =>
       recallEntriesAndArtifacts({
         userId,
@@ -103,6 +105,7 @@ export function createComind(config: CreateComindConfig) {
         query,
         limit: opts?.limit,
         searchLimit: opts?.searchLimit,
+        explain: opts?.explain,
         deps: { store, embeddings },
       }),
 

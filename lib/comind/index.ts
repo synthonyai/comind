@@ -16,6 +16,7 @@ export type { Comind, CreateComindConfig } from "@/lib/comind/createComind";
 // --- Recall result shapes returned by the standalone `recall()` verb: raw
 //     entries and derived artifacts, each carrying its `intention` score. ---
 export type { RecalledEntry, RecalledArtifact } from "@/lib/comind/contextRecall";
+export type { RecallExplanation, RecallSignal, MatchedTerm, IntentionSource } from "@/lib/comind/intentions";
 
 // --- The continuity assembler (v0.2 item B): the pure "wake" function and the
 //     ContinuityState packet it returns. `comind.wake()` is the instance-method

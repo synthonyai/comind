@@ -54,6 +54,20 @@ async function main() {
     (recalled.entries[0]?.content ?? "").toLowerCase().includes("postgres"),
     recalled.entries[0]?.content);
   check("recall returns an artifacts array", Array.isArray(recalled.artifacts));
+  check("recall without explain carries no `why`", recalled.entries.every((e) => e.why === undefined));
+
+  console.log("\n[smoke] recall(..., { explain: true }) — why each memory came up:");
+  const explained = await comind.recall(ctx.id, "What did we decide about postgres storage?", { explain: true });
+  const top = explained.entries[0]?.why;
+  console.log("  top score:", top?.score.toFixed(3), "· matched:", top?.matched.map((m) => `${m.term} (${m.source.kind})`));
+  check("explain keeps the exact same ranking",
+    explained.entries.map((e) => e.id).join() === recalled.entries.map((e) => e.id).join());
+  check("explain attaches `why` to every entry", explained.entries.every((e) => e.why !== undefined));
+  check("the score is the sum of the six signal contributions",
+    !!top && Math.abs(top.score - Object.values(top.signals).reduce((s, x) => s + x.contribution, 0)) < 1e-9);
+  check("explain names the governing items that boosted it",
+    !!top && top.matched.length > 0 && top.matched.every((m) => m.source.text.length > 0),
+    top?.matched);
 
   console.log("\n[smoke] listMemories({ contextId }):");
   const listed = await comind.listMemories({ contextId: ctx.id });

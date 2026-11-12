@@ -34,6 +34,59 @@ interface MemoryCandidate {
 
 interface MemoryCandidateWithIntention extends MemoryCandidate {
   intention: number;
+  // Present only when recall is asked to explain itself.
+  matched?: MatchedTerm[];
+  sameContext?: boolean;
+  explanation?: RecallExplanation;
+}
+
+// ---------------------------------------------------------------------------
+// Explainable recall — WHY a memory came up (opt-in, additive). The ranking is
+// identical with or without it; explaining only keeps what the rerank computed.
+// ---------------------------------------------------------------------------
+
+/** Where an intention term came from: which governing item, in which context. */
+export interface IntentionSource {
+  kind: 'seedIntent' | 'goal' | 'value' | 'directive' | 'watchWord';
+  /** The governing item's text (goal title, value, directive, …). */
+  text: string;
+  contextId: string;
+  /** True when it came from the root context (applies everywhere). */
+  root: boolean;
+}
+
+/** One intention term found in a memory, and the governing item behind it. */
+export interface MatchedTerm {
+  term: string;
+  weight: number;
+  in: 'content' | 'tags';
+  source: IntentionSource;
+}
+
+/** One of the six rerank signals: its raw value, its weight, and what it added. */
+export interface RecallSignal {
+  value: number;
+  weight: number;
+  contribution: number;
+}
+
+export interface RecallExplanation {
+  /** The combined rerank score (sum of the signal contributions). */
+  score: number;
+  signals: {
+    similarity: RecallSignal;
+    intention: RecallSignal;
+    importance: RecallSignal;
+    decayedAccess: RecallSignal;
+    creationRecency: RecallSignal;
+    consolidation: RecallSignal;
+  };
+  /** Intention terms found in the memory — what goals/values/intent boosted it. */
+  matched: MatchedTerm[];
+  /** Whether the memory belongs to the context recall ran for (it gets a boost). */
+  sameContext: boolean;
+  /** Artifacts only: source entries this artifact replaced in the results (prefer-artifact dedup). */
+  replacedEntryIds: string[];
 }
 
 // Weight hierarchy — goals are primary recall drivers, everything else is secondary.
@@ -53,14 +106,26 @@ function tokenizeTerms(phrase: string): string[] {
     .filter(word => word.length > 3);
 }
 
+/** The intention lens: term -> weight, plus which governing item each term came from. */
+interface IntentionDict {
+  weights: Map<string, number>;
+  sources: Map<string, IntentionSource>;
+}
+
 function applyTerms(
-  dict: Map<string, number>,
+  dict: IntentionDict,
   phrases: string[],
-  weight: number
+  weight: number,
+  source: Omit<IntentionSource, 'text'>
 ) {
   for (const phrase of phrases) {
     for (const keyword of tokenizeTerms(phrase)) {
-      dict.set(keyword, Math.max(dict.get(keyword) ?? 0, weight));
+      const current = dict.weights.get(keyword) ?? 0;
+      // A term keeps its strongest weight; its source is the item that gave it.
+      if (!dict.sources.has(keyword) || weight > current) {
+        dict.sources.set(keyword, { ...source, text: phrase });
+      }
+      dict.weights.set(keyword, Math.max(current, weight));
     }
   }
 }
@@ -68,7 +133,8 @@ function applyTerms(
 async function loadContextSignals(
   store: MemoryStore,
   contextId: string,
-  dict: Map<string, number>
+  dict: IntentionDict,
+  root: boolean
 ) {
   const [agent, context, goals] = await Promise.all([
     store.getAgentProfileForContext(contextId),
@@ -78,40 +144,40 @@ async function loadContextSignals(
 
   // Seed intent — north star for the context, weighted same as a high-priority goal
   if (context?.seedIntent) {
-    applyTerms(dict, [context.seedIntent], WEIGHTS.GOAL_BASE);
+    applyTerms(dict, [context.seedIntent], WEIGHTS.GOAL_BASE, { kind: 'seedIntent', contextId, root });
   }
 
   // Goals — primary signal, scaled by goal.weight
   for (const goal of goals) {
     const goalWeight = WEIGHTS.GOAL_BASE * (goal.weight ?? 0.5);
-    applyTerms(dict, [goal.title], goalWeight);
+    applyTerms(dict, [goal.title], goalWeight, { kind: 'goal', contextId, root });
   }
 
   // Agent directives and watchwords
   if (agent) {
-    applyTerms(dict, agent.directives ?? [], WEIGHTS.DIRECTIVE);
-    applyTerms(dict, agent.watchWords ?? [], WEIGHTS.WATCH_WORD);
+    applyTerms(dict, agent.directives ?? [], WEIGHTS.DIRECTIVE, { kind: 'directive', contextId, root });
+    applyTerms(dict, agent.watchWords ?? [], WEIGHTS.WATCH_WORD, { kind: 'watchWord', contextId, root });
   }
 
   // Guiding principles
-  applyTerms(dict, context?.values ?? [], WEIGHTS.VALUE);
+  applyTerms(dict, context?.values ?? [], WEIGHTS.VALUE, { kind: 'value', contextId, root });
 }
 
 async function loadIntentionDict(
   contextId: string,
   store: MemoryStore
-): Promise<Map<string, number>> {
-  const dict = new Map<string, number>();
+): Promise<IntentionDict> {
+  const dict: IntentionDict = { weights: new Map(), sources: new Map() };
   // Root resolved through the store (parentId === null for this scope), so the
   // intention dict no longer depends on Prisma.
   const rootContextId = await store.getRootContextId();
 
   if (rootContextId) {
-    await loadContextSignals(store, rootContextId, dict);
+    await loadContextSignals(store, rootContextId, dict, true);
   }
 
   if (contextId !== rootContextId) {
-    await loadContextSignals(store, contextId, dict);
+    await loadContextSignals(store, contextId, dict, false);
   }
 
   return dict;
@@ -129,7 +195,7 @@ export async function buildIntentionMatcher(
   normalizationFactor: number = 3.0,
   store?: MemoryStore
 ): Promise<IntentionMatcher> {
-  const dict = await loadIntentionDict(contextId, await resolveStore(userId, store));
+  const dict = (await loadIntentionDict(contextId, await resolveStore(userId, store))).weights;
 
   return (text: string): number => {
     if (!text) return 0;
@@ -154,7 +220,7 @@ export async function buildEnhancedIntentionMatcher(
   store?: MemoryStore
 ): Promise<(candidate: MemoryCandidate) => number> {
   const { normalizationFactor = 3.0, tagBoost = 0.2, contextBoost = 0.1 } = options;
-  const dict = await loadIntentionDict(contextId, await resolveStore(userId, store));
+  const dict = (await loadIntentionDict(contextId, await resolveStore(userId, store))).weights;
 
   return (candidate: MemoryCandidate): number => {
     let totalScore = 0;
@@ -185,18 +251,42 @@ export async function buildEnhancedIntentionMatcher(
   };
 }
 
+/** Which intention terms a memory contains (content and tags), with their sources. */
+function matchTerms(dict: IntentionDict, candidate: MemoryCandidate): MatchedTerm[] {
+  const content = candidate.content.toLowerCase();
+  const tags = (candidate.tags ?? []).join(' ').toLowerCase();
+  const matched: MatchedTerm[] = [];
+  for (const [term, weight] of dict.weights.entries()) {
+    if (!term) continue;
+    const source = dict.sources.get(term)!;
+    if (content.includes(term)) matched.push({ term, weight, in: 'content', source });
+    if (tags && tags.includes(term)) matched.push({ term, weight, in: 'tags', source });
+  }
+  return matched.sort((a, b) => b.weight - a.weight);
+}
+
 export async function annotateWithIntention(
   userId: string,
   contextId: string,
   candidates: MemoryCandidate[],
   useEnhanced: boolean = false,
-  store?: MemoryStore
+  store?: MemoryStore,
+  explain: boolean = false
 ): Promise<MemoryCandidateWithIntention[]> {
   // Resolve once so both branches (and the dict load) share one store instance.
   const resolved = await resolveStore(userId, store);
   if (useEnhanced) {
     const matcher = await buildEnhancedIntentionMatcher(userId, contextId, {}, resolved);
-    return candidates.map(candidate => ({ ...candidate, intention: matcher(candidate) }));
+    if (!explain) {
+      return candidates.map(candidate => ({ ...candidate, intention: matcher(candidate) }));
+    }
+    const dict = await loadIntentionDict(contextId, resolved);
+    return candidates.map(candidate => ({
+      ...candidate,
+      intention: matcher(candidate),
+      matched: matchTerms(dict, candidate),
+      sameContext: candidate.contextId === contextId,
+    }));
   } else {
     const matcher = await buildIntentionMatcher(userId, contextId, 3.0, resolved);
     return candidates.map(candidate => ({ ...candidate, intention: matcher(candidate.content) }));
@@ -226,6 +316,8 @@ export function rerankWithIntention(
     consolidationWeight?: number;
     creationRecencyDecayDays?: number;
     useRecencyDecayDays?: number;
+    /** Attach a per-signal `explanation` to each result (ranking unchanged). */
+    explain?: boolean;
   } = {}
 ): MemoryCandidateWithIntention[] {
   const {
@@ -237,6 +329,7 @@ export function rerankWithIntention(
     consolidationWeight = 0.05,
     creationRecencyDecayDays = 30,
     useRecencyDecayDays = 14,
+    explain = false,
   } = options;
 
   const now = new Date();
@@ -271,7 +364,24 @@ export function rerankWithIntention(
       (creationRecency * creationRecencyWeight) +
       (consolidation * consolidationWeight);
 
-    return { ...candidate, combinedScore };
+    if (!explain) return { ...candidate, combinedScore };
+
+    const signal = (value: number, weight: number): RecallSignal => ({ value, weight, contribution: value * weight });
+    const explanation: RecallExplanation = {
+      score: combinedScore,
+      signals: {
+        similarity: signal(similarity, similarityWeight),
+        intention: signal(intention, intentionWeight),
+        importance: signal(importance, importanceWeight),
+        decayedAccess: signal(decayedAccess, accessWeight),
+        creationRecency: signal(creationRecency, creationRecencyWeight),
+        consolidation: signal(consolidation, consolidationWeight),
+      },
+      matched: candidate.matched ?? [],
+      sameContext: candidate.sameContext ?? false,
+      replacedEntryIds: [],
+    };
+    return { ...candidate, combinedScore, explanation };
   });
 
   return scoredCandidates
@@ -365,12 +475,14 @@ export async function searchWithIntention(
     sourceEntryIds: h.sourceEntryIds,
   }));
 
+  const explain = rerankOptions?.explain ?? false;
   const candidatesWithIntention = await annotateWithIntention(
     userId,
     contextId,
     [...entryCandidates, ...artifactCandidates],
     true,
-    store
+    store,
+    explain
   );
 
   const reranked = rerankWithIntention(candidatesWithIntention, rerankOptions);
@@ -387,6 +499,15 @@ export async function searchWithIntention(
   const rerankedResults = reranked.filter(
     (c) => c.kind === 'artifact' || !supersededEntryIds.has(c.id)
   );
+
+  if (explain) {
+    const survivingEntryIds = new Set(reranked.filter((c) => c.kind !== 'artifact').map((c) => c.id));
+    for (const c of rerankedResults) {
+      if (c.kind === 'artifact' && c.explanation) {
+        c.explanation.replacedEntryIds = (c.sourceEntryIds ?? []).filter((id) => survivingEntryIds.has(id));
+      }
+    }
+  }
 
   const intentionScores = candidatesWithIntention.map(c => c.intention);
   const avgIntentionScore = intentionScores.length > 0

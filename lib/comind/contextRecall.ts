@@ -9,11 +9,15 @@
 // the single place that slices the reranked rows and hydrates each from its own
 // table, splitting them back into entries vs. derived artifacts.
 import { searchWithIntention } from "@/lib/comind/intentions";
-import type { RecallDeps } from "@/lib/comind/intentions";
+import type { RecallDeps, RecallExplanation } from "@/lib/comind/intentions";
 import type { MemoryEntry } from "@/lib/comind/types";
 
 /** A hydrated raw memory entry plus its intention score from the rerank. */
-export type RecalledEntry = MemoryEntry & { intention: number };
+export type RecalledEntry = MemoryEntry & {
+  intention: number;
+  /** Why it came up — present only when recall was called with `explain: true`. */
+  why?: RecallExplanation;
+};
 
 /** A hydrated derived artifact plus its intention score from the rerank. */
 export interface RecalledArtifact {
@@ -23,6 +27,8 @@ export interface RecalledArtifact {
   confidence: number;
   createdAt: Date;
   intention: number;
+  /** Why it came up — present only when recall was called with `explain: true`. */
+  why?: RecallExplanation;
 }
 
 /**
@@ -32,6 +38,8 @@ export interface RecalledArtifact {
  *   the rerank, before prefer-artifact dedup.
  * - `limit` — final cap on reranked rows to hydrate. Omit to hydrate all
  *   survivors (the runtime path); pass a number to cap (the inspector path).
+ * - `explain` — attach `why` (score, the six signals, the governing items that
+ *   boosted it). Additive: the ranking is the same either way.
  * - `deps` — injected embedder/store; defaults to the batteries-included
  *   adapters inside `searchWithIntention` when omitted.
  */
@@ -41,9 +49,10 @@ export async function recallEntriesAndArtifacts(params: {
   query: string;
   limit?: number;
   searchLimit?: number;
+  explain?: boolean;
   deps?: RecallDeps;
 }): Promise<{ entries: RecalledEntry[]; artifacts: RecalledArtifact[] }> {
-  const { userId, contextId, query, limit, searchLimit = 8, deps } = params;
+  const { userId, contextId, query, limit, searchLimit = 8, explain = false, deps } = params;
 
   // Soft-membership recall (v0.2 decision #6): context = foreground, not box. The
   // candidate POOL is cross-context (`contextId: null` — the store returns all
@@ -56,7 +65,7 @@ export async function recallEntriesAndArtifacts(params: {
     contextId,
     query,
     { contextId: null, limit: searchLimit },
-    undefined,
+    explain ? { explain: true } : undefined,
     deps
   );
 
@@ -70,6 +79,7 @@ export async function recallEntriesAndArtifacts(params: {
   const hydrated = await Promise.all(
     selected.map(async (r) => {
       const intention = (r as { intention?: number }).intention ?? 0;
+      const why = explain ? { why: r.explanation } : {};
       if (r.kind === "artifact") {
         const artifact = await store.getArtifact(r.id);
         return artifact
@@ -82,12 +92,13 @@ export async function recallEntriesAndArtifacts(params: {
                 confidence: artifact.confidence,
                 createdAt: artifact.createdAt,
                 intention,
+                ...why,
               },
             })
           : null;
       }
       const entry = await store.getMemoryEntry(r.id);
-      return entry ? ({ kind: "entry" as const, row: { ...entry, intention } }) : null;
+      return entry ? ({ kind: "entry" as const, row: { ...entry, intention, ...why } }) : null;
     })
   );
 
