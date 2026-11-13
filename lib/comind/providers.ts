@@ -33,6 +33,7 @@ import type {
   GoalStatus,
   GoverningItem,
   GoverningKind,
+  GoverningSuggestion,
 } from '@/lib/comind/types';
 
 // ---------------------------------------------------------------------------
@@ -187,6 +188,15 @@ export interface GoverningItemPatch {
   priority?: number;
   outranks?: boolean;
   order?: number | null;
+}
+
+/** A suggestion as created (by the mind, via the host). */
+export interface NewGoverningSuggestion {
+  contextId: string;
+  kind: GoverningSuggestion['kind'];
+  text: string;
+  priority?: number;
+  rationale?: string | null;
 }
 
 /** Mutable fields on a context — the person's direct edits. */
@@ -399,6 +409,13 @@ export interface MemoryStore {
   createGoverningItem(input: NewGoverningItem): Promise<GoverningItem>;
   updateGoverningItem(id: string, patch: GoverningItemPatch): Promise<GoverningItem>;
   deleteGoverningItem(id: string): Promise<void>;
+
+  // --- Suggestions: governing changes the mind proposes, awaiting the person's OK ---
+  createSuggestion(input: NewGoverningSuggestion): Promise<GoverningSuggestion>;
+  getSuggestion(id: string): Promise<GoverningSuggestion | null>;
+  /** A context's suggestions, oldest first; only `status` ones when given. */
+  listSuggestions(contextId: string, status?: GoverningSuggestion['status']): Promise<GoverningSuggestion[]>;
+  setSuggestionStatus(id: string, status: GoverningSuggestion['status']): Promise<GoverningSuggestion>;
 }
 
 // ---------------------------------------------------------------------------
@@ -434,10 +451,15 @@ export interface EmbeddingProvider {
  * - `reply`      — the guide answering the person (streamed).
  * - `extraction` — distilling durable meaning (decisions, insights, tasks…) from
  *                  an exchange, after the reply.
+ * - `summary`    — writing the mind's own understanding of a context.
+ * - `drafting`   — proposing governing memory (goals, values, watch words) from
+ *                  what the person said.
  *
- * Reserved for jobs the library will add: `summary`, `coherence`, `loop-closing`.
+ * Reserved for jobs the library will add: `coherence`, `loop-closing`. A host may
+ * route its OWN jobs through the same provider under its own names.
  */
-export type LLMJob = 'reply' | 'extraction' | 'summary' | 'coherence' | 'loop-closing';
+export type LibraryJob = 'reply' | 'extraction' | 'summary' | 'drafting' | 'coherence' | 'loop-closing';
+export type LLMJob = LibraryJob | (string & {});
 
 /** One message in a conversation. */
 export interface ChatMessage {

@@ -11,11 +11,15 @@
  *      the guide first, labelled "(comes first)".
  *   5. Recall alone isn't use: `reply` reinforces nothing; `extract` reinforces
  *      only the recalled memories the reply drew on (`usedMemoryIds`).
+ *   6. The mind proposes, the person decides: `draftGoverning` drafts (stores
+ *      nothing, knows the root so it doesn't repeat it); suggestions wait as
+ *      pending and approving applies them; `updateContextSummary` writes the
+ *      mind's own view.
  *
  * Usage: npm run characterize:governing
  */
 
-import { createComind, DEFAULT_KIND_WEIGHTS } from "@/lib/comind";
+import { createComind, DEFAULT_KIND_WEIGHTS, type LLMProvider, type LLMJob } from "@/lib/comind";
 import { InMemoryMemoryStore } from "@/demo/inMemoryStore";
 import { StubEmbeddings, StubLLM, makeChecker, type StubTurn } from "@/characterization/stubs";
 
@@ -174,6 +178,58 @@ async function main() {
     checkTrue("extraction prompt asks which memories the reply drew on",
       (await (async () => { const l = new StubLLM(out()); const c2 = createComind({ userId: "demo", store, embeddings, llm: l });
         await c2.extract(turn.input, text); return l.calls[0]?.prompt ?? ""; })()).includes("usedMemoryIds"));
+  }
+
+  // === 6: drafts, suggestions, the mind's view ===============================
+  {
+    console.log("[governing] the mind drafts and suggests; the person decides…");
+    const calls: { job: LLMJob; prompt: string }[] = [];
+    const llm: LLMProvider = {
+      async *streamText() { yield ""; },
+      async generateStructured<T>(p: { job: LLMJob; prompt: string }): Promise<T> {
+        calls.push({ job: p.job, prompt: p.prompt });
+        if (p.job === "drafting") {
+          return {
+            goals: [{ text: "Run 3x a week", priority: 0.8, why: "they said so" }],
+            values: [{ text: "Consistency over intensity", priority: 0.5, why: "they said so" }],
+            watchWords: [{ text: "skipped", priority: 0.5, why: "past pattern" }],
+          } as T;
+        }
+        return { summary: "  Running is your reset; you push too hard early.  " } as T;
+      },
+    };
+    const store = new InMemoryMemoryStore();
+    const embeddings = new StubEmbeddings();
+    const comind = createComind({ userId: "demo", store, embeddings, llm });
+    await comind.createContext({ name: "Root", isRoot: true, values: ["Family first"] });
+    const ctx = await comind.createContext({ name: "Fitness", seedIntent: "Run again" });
+
+    const draft = await comind.draftGoverning({ about: { name: "Fitness", seedIntent: "Run again" }, text: "Guide: What does back look like?\nPerson: 3 runs a week." });
+    check("draft job name", calls[0]?.job, "drafting");
+    checkTrue("drafting prompt shows the root so it isn't repeated", calls[0]?.prompt.includes("Family first") ?? false);
+    checkTrue("drafting prompt carries what the person said", calls[0]?.prompt.includes("3 runs a week") ?? false);
+    check("draft returned", [draft.goals[0].text, draft.values[0].text, draft.watchWords[0].text], ["Run 3x a week", "Consistency over intensity", "skipped"]);
+    check("drafting stored nothing", [(await store.listGoals({ contextId: ctx.id })).length, (await store.getContext(ctx.id))?.values.length], [0, 0]);
+
+    const s1 = await comind.suggestions.add(ctx.id, { kind: "goal", text: "Run a 10k", priority: 0.5, rationale: "mentioned a race" });
+    const s2 = await comind.suggestions.add(ctx.id, { kind: "value", text: "Listen to the body" });
+    check("suggestions wait as pending", (await comind.suggestions.list(ctx.id)).map((x) => x.text), ["Run a 10k", "Listen to the body"]);
+    await comind.suggestions.approve(s1.id, { text: "Run a 10k by spring", priority: 0.8 });
+    await comind.suggestions.reject(s2.id);
+    check("approving applies it in the person's words", (await store.listGoals({ contextId: ctx.id })).map((g) => [g.title, g.weight]), [["Run a 10k by spring", 0.8]]);
+    check("rejecting applies nothing", (await store.getContext(ctx.id))?.values.length, 0);
+    check("nothing left pending", (await comind.suggestions.list(ctx.id)).length, 0);
+    let twice = false;
+    try { await comind.suggestions.approve(s1.id); } catch { twice = true; }
+    checkTrue("a decided suggestion can't be approved again", twice);
+
+    await comind.storeMemory({ contextId: ctx.id, content: "Ran 5k, knee fine" });
+    const updated = await comind.updateContextSummary(ctx.id, { seed: "I want consistency" });
+    check("summary job name", calls.at(-1)?.job, "summary");
+    checkTrue("summary prompt sees recent entries and the seed", (calls.at(-1)?.prompt.includes("Ran 5k") && calls.at(-1)?.prompt.includes("I want consistency")) ?? false);
+    check("the mind's view is written to the context", updated.summary, "Running is your reset; you push too hard early.");
+    await comind.updateContextSummary(ctx.id);
+    checkTrue("a refresh sees its previous understanding", calls.at(-1)?.prompt.includes("Your previous understanding") ?? false);
   }
 
   report();

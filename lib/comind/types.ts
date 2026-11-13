@@ -152,6 +152,25 @@ export interface GoverningItem {
   order?: number | null;
 }
 
+/**
+ * A change the MIND proposes to governing memory, waiting for the person's OK.
+ * Governing memory is the person's: the mind never changes it directly — it
+ * suggests, and an approved suggestion is applied with the normal verbs.
+ */
+export interface GoverningSuggestion {
+  id: string;
+  contextId: string;
+  /** What it would add: a goal, or a governing item of this kind. */
+  kind: 'goal' | GoverningKind;
+  text: string;
+  /** Proposed priority (goal weight / item priority), 0–1. */
+  priority: number;
+  /** Why the mind suggests it (shown to the person). */
+  rationale?: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: Date;
+}
+
 // ---------------------------------------------------------------------------
 // Context — a scoped cognitive space
 // ---------------------------------------------------------------------------

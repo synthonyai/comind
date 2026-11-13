@@ -49,11 +49,16 @@ export type {
   GoverningItemInput,
   NewGoverningItem,
   GoverningItemPatch,
+  NewGoverningSuggestion,
   NewMemoryLink,
   MemoryLinkFilters,
   LLMJob,
+  LibraryJob,
   ChatMessage,
 } from "@/lib/comind/providers";
+
+// The mind's drafts of governing memory (`draftGoverning`) and what they're about.
+export type { GoverningDraft, DraftSubject } from "@/lib/comind/governance";
 
 // Normalise a governing-item seed (plain string or full input) — for custom stores.
 export { governingInput } from "@/lib/comind/providers";
@@ -80,6 +85,7 @@ export type {
   Goal,
   GoverningItem,
   GoverningKind,
+  GoverningSuggestion,
   MemoryLink,
   ArtifactSourceLink,
   MemoryType,

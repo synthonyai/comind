@@ -150,6 +150,9 @@ The v0.2 demos need no keys.
 | `createContext` / `createGoal` / `createAgentProfile` | Set up who the agent is and what it is working toward. Mark one context `isRoot` — its goals and values apply everywhere and come first. |
 | `updateContext` / `updateGoal` / `updateAgentProfile` | Change them later. |
 | `values` / `watchWords` / `directives` `.add` · `.update` · `.remove` | Edit what the agent steers by. Each item has a `priority` within its kind and can be marked `outranks` (above everything else). The order between kinds is a setting: `createComind({ intention: { kindWeights } })`. |
+| `draftGoverning({ about, text })` | The mind drafts goals, values and watch words from what the person said. Nothing is stored — show them for approval. |
+| `suggestions.add` · `.list` · `.approve` · `.reject` | Changes the mind proposes, waiting for the person's OK; approving applies them. |
+| `updateContextSummary(contextId)` | The mind writes its own short understanding of a context. |
 
 For hosts and tests, the wake logic is also exported as a standalone function:
 

@@ -52,6 +52,8 @@ import type {
   GoverningKind,
   NewGoverningItem,
   GoverningItemPatch,
+  GoverningSuggestion,
+  NewGoverningSuggestion,
 } from "@/lib/comind";
 
 /** Deep-enough copy so callers never mutate the store's lists. */
@@ -408,6 +410,44 @@ export class InMemoryMemoryStore implements MemoryStore {
   async deleteGoverningItem(id: string): Promise<void> {
     const { list, index } = this.findItem(id);
     list.splice(index, 1);
+  }
+
+  // --- Suggestions (the mind proposes; the person approves) -----------------
+
+  private readonly suggestions = new Map<string, GoverningSuggestion>();
+
+  async createSuggestion(input: NewGoverningSuggestion): Promise<GoverningSuggestion> {
+    if (!this.contexts.has(input.contextId)) throw new Error(`Context ${input.contextId} not found`);
+    const s: GoverningSuggestion = {
+      id: randomUUID(),
+      contextId: input.contextId,
+      kind: input.kind,
+      text: input.text,
+      priority: input.priority ?? 0.5,
+      rationale: input.rationale ?? null,
+      status: "pending",
+      createdAt: new Date(),
+    };
+    this.suggestions.set(s.id, s);
+    return { ...s };
+  }
+
+  async getSuggestion(id: string): Promise<GoverningSuggestion | null> {
+    const s = this.suggestions.get(id);
+    return s ? { ...s } : null;
+  }
+
+  async listSuggestions(contextId: string, status?: GoverningSuggestion["status"]): Promise<GoverningSuggestion[]> {
+    return [...this.suggestions.values()]
+      .filter((s) => s.contextId === contextId && (!status || s.status === status))
+      .map((s) => ({ ...s }));
+  }
+
+  async setSuggestionStatus(id: string, status: GoverningSuggestion["status"]): Promise<GoverningSuggestion> {
+    const s = this.suggestions.get(id);
+    if (!s) throw new Error(`Suggestion ${id} not found`);
+    s.status = status;
+    return { ...s };
   }
 
   async createGoal(input: NewGoal): Promise<Goal> {

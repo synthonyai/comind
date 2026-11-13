@@ -20,7 +20,8 @@ import type {
 } from '@/lib/comind/providers';
 import type { IntentionSettings } from '@/lib/comind/intentions';
 import type { TurnOptions, GuideInput } from '@/lib/comind/agentRuntime/types';
-import type { MemoryType, AttributionType, GoverningKind } from '@/lib/comind/types';
+import type { MemoryType, AttributionType, GoverningKind, GoverningSuggestion } from '@/lib/comind/types';
+import type { DraftSubject } from '@/lib/comind/governance';
 import { recallEntriesAndArtifacts } from '@/lib/comind/contextRecall';
 import { assembleContinuityState, PROMOTION } from '@/lib/comind/continuity';
 import { seedCaptureImportance } from '@/lib/comind/importance';
@@ -254,6 +255,45 @@ export function createComind(config: CreateComindConfig) {
     watchWords: governingVerbs(store, 'watchWord'),
     /** The agent's directives for a context (its profile must exist) — same verbs as `values`. */
     directives: governingVerbs(store, 'directive'),
+
+    // --- The mind's part: it proposes; the person decides. ---
+
+    /**
+     * Draft goals, values and watch words from what the person said (a setup
+     * conversation, a description…) with the `drafting` job. Nothing is stored:
+     * show the drafts for approval, and keep any undecided ones with
+     * `suggestions.add`. Knows the root context (and `contextId`'s own items, if
+     * given) so it doesn't repeat them.
+     */
+    draftGoverning: async (params: { about: DraftSubject; text: string; contextId?: string }) => {
+      const { draftGoverning } = await import('@/lib/comind/governance');
+      return draftGoverning(params, { store, llm });
+    },
+
+    /** Governing changes the mind proposes, waiting for the person's OK. */
+    suggestions: {
+      add: (contextId: string, s: { kind: GoverningSuggestion['kind']; text: string; priority?: number; rationale?: string | null }) =>
+        store.createSuggestion({ ...s, contextId }),
+      list: (contextId: string, status: GoverningSuggestion['status'] = 'pending') => store.listSuggestions(contextId, status),
+      /** Apply it (optionally in the person's own words / priority), then mark it approved. */
+      approve: async (id: string, edits?: { text?: string; priority?: number; outranks?: boolean }) => {
+        const { approveSuggestion } = await import('@/lib/comind/governance');
+        return approveSuggestion(id, edits, store);
+      },
+      reject: (id: string) => store.setSuggestionStatus(id, 'rejected'),
+    },
+
+    /**
+     * Write (or refresh) the mind's own understanding of a context into
+     * `Context.summary` with the `summary` job — from its frame, recent entries,
+     * settled beliefs and its previous understanding. `seed` adds text the
+     * person gave while setting the context up. The mind's, not governing
+     * memory: it updates freely.
+     */
+    updateContextSummary: async (contextId: string, opts?: { seed?: string }) => {
+      const { updateContextSummary } = await import('@/lib/comind/governance');
+      return updateContextSummary({ contextId, seed: opts?.seed }, { store, llm });
+    },
   };
 }
 
