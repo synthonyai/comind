@@ -31,6 +31,8 @@ import type {
   AgentProfile,
   Goal,
   GoalStatus,
+  GoverningItem,
+  GoverningKind,
 } from '@/lib/comind/types';
 
 // ---------------------------------------------------------------------------
@@ -128,6 +130,7 @@ export interface NewGoal {
   status?: GoalStatus;
   weight?: number;
   order?: number | null;
+  outranks?: boolean;
   parentId?: string | null;
 }
 
@@ -138,14 +141,9 @@ export interface NewGoal {
  * `listGoals` feeds the intention lens, so the *same memory pile re-ranks* under
  * the surviving goals (#4/#13) — the lens shifts beneath a core that doesn't.
  *
- * Note (deliberate boundary): there is intentionally NO `updateContext` /
- * `updateAgentProfile`. The standing identity (seedIntent, values, directives,
- * watchWords) is the PERSISTENT core and is immutable in v0.1 by construction —
- * the absence of a setter is the guarantee that the core sticks. Identity
- * evolution arrives in v0.2 through the governed root-aligner path (root override
- * + misalignment detection + human control), never a raw setter. `parentId`
- * (goal reparenting) is also omitted: it's structural, not lifecycle, and goal
- * hierarchy isn't wired in v0.1.
+ * Governing memory is changed by the person (through the host), never by the
+ * mind on its own: these setters are the person's direct edits. `parentId`
+ * (goal reparenting) is omitted: it's structural, not lifecycle.
  */
 export interface GoalPatch {
   status?: GoalStatus;
@@ -153,6 +151,61 @@ export interface GoalPatch {
   title?: string;
   description?: string | null;
   order?: number | null;
+  outranks?: boolean;
+}
+
+/** A governing item as supplied on create (inline with a context/profile, or on its own). */
+export interface GoverningItemInput {
+  text: string;
+  /** 0–1 within its kind; default 0.5. */
+  priority?: number;
+  /** Default false. */
+  outranks?: boolean;
+  order?: number | null;
+}
+
+/** Shorthand on create: a plain string is an item at default priority that doesn't outrank. */
+export type GoverningItemSeed = string | GoverningItemInput;
+
+/** Normalise a seed to a full input (used by stores). */
+export function governingInput(seed: GoverningItemSeed): GoverningItemInput {
+  return typeof seed === 'string' ? { text: seed } : seed;
+}
+
+/**
+ * Create one governing item. It is stored with its owner: `value` / `watchWord`
+ * on the context, `directive` on the context's agent profile (which must exist).
+ */
+export interface NewGoverningItem extends GoverningItemInput {
+  contextId: string;
+  kind: GoverningKind;
+}
+
+/** Mutable fields on a governing item (its kind and owner never change). */
+export interface GoverningItemPatch {
+  text?: string;
+  priority?: number;
+  outranks?: boolean;
+  order?: number | null;
+}
+
+/** Mutable fields on a context — the person's direct edits. */
+export interface ContextPatch {
+  name?: string;
+  seedIntent?: string | null;
+  whyItMatters?: string | null;
+  description?: string | null;
+  direction?: string | null;
+  summary?: string | null;
+  themes?: string[];
+  constraints?: string[];
+  assumptions?: string[];
+}
+
+/** Mutable fields on an agent profile. */
+export interface AgentProfilePatch {
+  name?: string | null;
+  description?: string | null;
 }
 
 /**
@@ -184,8 +237,14 @@ export interface NewContext {
   themes?: string[];
   constraints?: string[];
   assumptions?: string[];
-  values?: string[];
+  values?: GoverningItemSeed[];
+  watchWords?: GoverningItemSeed[];
   parentId?: string | null;
+  /**
+   * Mark this as the root context. The store keeps at most one per scope and
+   * rejects a second.
+   */
+  isRoot?: boolean;
 }
 
 /** Fields supplied when creating a new agent profile. */
@@ -193,8 +252,7 @@ export interface NewAgentProfile {
   name?: string | null;
   homeContextId?: string | null;
   description?: string | null;
-  directives?: string[];
-  watchWords?: string[];
+  directives?: GoverningItemSeed[];
 }
 
 /**
@@ -321,7 +379,8 @@ export interface MemoryStore {
   // --- Context, goals & agent profile (so the library is self-contained) ---
   createContext(input: NewContext): Promise<Context>;
   getContext(id: string): Promise<Context | null>;
-  /** The root context for this store's scope (parentId === null). Null if none. */
+  updateContext(id: string, patch: ContextPatch): Promise<Context>;
+  /** The context marked `isRoot` for this store's scope. Null if none. */
   getRootContextId(): Promise<string | null>;
   createGoal(input: NewGoal): Promise<Goal>;
   /**
@@ -334,6 +393,12 @@ export interface MemoryStore {
   listGoals(filters: GoalFilters): Promise<Goal[]>;
   createAgentProfile(input: NewAgentProfile): Promise<AgentProfile>;
   getAgentProfileForContext(contextId: string): Promise<AgentProfile | null>;
+  updateAgentProfile(id: string, patch: AgentProfilePatch): Promise<AgentProfile>;
+
+  // --- Governing items (values, directives, watch words) ---
+  createGoverningItem(input: NewGoverningItem): Promise<GoverningItem>;
+  updateGoverningItem(id: string, patch: GoverningItemPatch): Promise<GoverningItem>;
+  deleteGoverningItem(id: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

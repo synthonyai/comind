@@ -1,11 +1,11 @@
 // lib/comind/agentRuntime/dataFetcher.ts
 
-import type { AgentContextData, FrameData, SeenEntry } from '@/lib/comind/agentRuntime/types';
+import type { AgentContextData, FrameData, LensItem, SeenEntry } from '@/lib/comind/agentRuntime/types';
 import { recallEntriesAndArtifacts } from '@/lib/comind/contextRecall';
 import { loadFrame, loadRootFrame, type Frame } from '@/lib/comind/continuity';
 import type { RecallDeps } from '@/lib/comind/intentions';
 import type { MemoryStore } from '@/lib/comind/providers';
-import type { MemoryEntry } from '@/lib/comind/types';
+import type { GoverningItem, MemoryEntry } from '@/lib/comind/types';
 
 /** How many recent entries a turn sees from its own context. */
 const RECENT_LIMIT = 5;
@@ -24,7 +24,14 @@ function seenEntry(entry: MemoryEntry & { why?: SeenEntry['why'] }, intention = 
     };
 }
 
-/** Shape one governing frame for the prompt. Goals: highest weight first. */
+/** Outranking items first, then by priority (stable for ties). */
+export function rankItems(items: GoverningItem[]): LensItem[] {
+    return [...items]
+        .sort((a, b) => Number(b.outranks) - Number(a.outranks) || b.priority - a.priority)
+        .map(({ id, text, priority, outranks }) => ({ id, text, priority, outranks }));
+}
+
+/** Shape one governing frame for the prompt. Every list: outranking first, then by priority. */
 function frameData({ agent, context, goals }: Frame): FrameData {
     return {
         // Only the core AgentProfile fields drive the cognitive prompt. Styling
@@ -32,8 +39,7 @@ function frameData({ agent, context, goals }: Frame): FrameData {
         agentProfile: agent ? {
             name: agent.name || '',
             description: agent.description || '',
-            directives: agent.directives || [],
-            watchWords: agent.watchWords || [],
+            directives: rankItems(agent.directives || []),
         } : null,
         context: context ? {
             seedIntent: context.seedIntent || null,
@@ -44,11 +50,12 @@ function frameData({ agent, context, goals }: Frame): FrameData {
             themes: context.themes || [],
             constraints: context.constraints || [],
             assumptions: context.assumptions || [],
-            values: context.values || [],
+            values: rankItems(context.values || []),
+            watchWords: rankItems(context.watchWords || []),
         } : null,
         goals: [...goals]
-            .sort((a, b) => b.weight - a.weight)
-            .map(g => ({ id: g.id, title: g.title, status: g.status, weight: g.weight })),
+            .sort((a, b) => Number(b.outranks) - Number(a.outranks) || b.weight - a.weight)
+            .map(g => ({ id: g.id, title: g.title, status: g.status, weight: g.weight, outranks: g.outranks ?? false })),
     };
 }
 

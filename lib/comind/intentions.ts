@@ -11,6 +11,55 @@ type IntentionMatcher = (text: string) => number;
 export interface RecallDeps {
   embeddings?: EmbeddingProvider;
   store?: MemoryStore;
+  /** How governing items weigh against each other in recall (defaults below). */
+  intention?: IntentionSettings;
+}
+
+/**
+ * The order BETWEEN kinds of governing memory. Each number is the recall weight
+ * of an item of that kind at MEDIUM priority (0.5); an item's own priority (0–1)
+ * scales it from 0× to 2× (goals use their `weight` as priority). `seedIntent`
+ * is a context's single intent line and has no priority.
+ */
+export interface KindWeights {
+  seedIntent: number;
+  goal: number;
+  value: number;
+  directive: number;
+  watchWord: number;
+}
+
+/** Defaults: goals lead; directives, values and watch words follow. */
+export const DEFAULT_KIND_WEIGHTS: KindWeights = {
+  seedIntent: 1.5,
+  goal: 0.75,   // a goal at weight 1 → 1.5
+  value: 0.7,
+  directive: 0.9,
+  watchWord: 0.6,
+};
+
+export interface IntentionSettings {
+  /** Override the order between kinds (any subset). */
+  kindWeights?: Partial<KindWeights>;
+}
+
+/** Resolved weights, including the band outranking items sit in (above every other item). */
+interface ResolvedWeights extends KindWeights {
+  outranksBase: number;
+}
+
+function resolveWeights(settings?: IntentionSettings): ResolvedWeights {
+  const k = { ...DEFAULT_KIND_WEIGHTS, ...settings?.kindWeights };
+  // The strongest any non-outranking item can be (a top-priority item of the
+  // heaviest kind, or a seed intent); outranking items start just above it.
+  const top = Math.max(k.seedIntent, 2 * k.goal, 2 * k.value, 2 * k.directive, 2 * k.watchWord);
+  return { ...k, outranksBase: top + 0.25 };
+}
+
+/** Weight of one governing item: its kind's weight scaled by priority, or the outranking band. */
+function itemWeight(w: ResolvedWeights, kind: keyof KindWeights, priority: number, outranks: boolean): number {
+  const p = Math.min(1, Math.max(0, priority));
+  return outranks ? w.outranksBase + 0.5 * p : w[kind] * 2 * p;
 }
 
 interface MemoryCandidate {
@@ -50,9 +99,13 @@ export interface IntentionSource {
   kind: 'seedIntent' | 'goal' | 'value' | 'directive' | 'watchWord';
   /** The governing item's text (goal title, value, directive, …). */
   text: string;
+  /** The goal's / governing item's id (absent for a seed intent). */
+  itemId?: string;
   contextId: string;
   /** True when it came from the root context (applies everywhere). */
   root: boolean;
+  /** True when the item outranks (sits above every non-outranking item). */
+  outranks: boolean;
 }
 
 /** One intention term found in a memory, and the governing item behind it. */
@@ -88,15 +141,6 @@ export interface RecallExplanation {
   /** Artifacts only: source entries this artifact replaced in the results (prefer-artifact dedup). */
   replacedEntryIds: string[];
 }
-
-// Weight hierarchy — goals are primary recall drivers, everything else is secondary.
-// Tune these values as recall quality data accumulates.
-const WEIGHTS = {
-  GOAL_BASE: 1.5,   // multiplied by goal.weight (0–1), so range is 0–1.5
-  VALUE: 0.7,       // guiding principles — background context, primarily feeds coherence
-  DIRECTIVE: 0.9,   // agent directives — behavioral signals
-  WATCH_WORD: 0.6,  // quick attention triggers — no longer the primary driver
-} as const;
 
 function tokenizeTerms(phrase: string): string[] {
   return phrase
@@ -134,7 +178,8 @@ async function loadContextSignals(
   store: MemoryStore,
   contextId: string,
   dict: IntentionDict,
-  root: boolean
+  root: boolean,
+  w: ResolvedWeights
 ) {
   const [agent, context, goals] = await Promise.all([
     store.getAgentProfileForContext(contextId),
@@ -142,42 +187,40 @@ async function loadContextSignals(
     store.listGoals({ contextId, status: 'ACTIVE' }),
   ]);
 
-  // Seed intent — the guiding intent of the context, weighted same as a high-priority goal
+  // Seed intent — the context's guiding intent line (no priority of its own).
   if (context?.seedIntent) {
-    applyTerms(dict, [context.seedIntent], WEIGHTS.GOAL_BASE, { kind: 'seedIntent', contextId, root });
+    applyTerms(dict, [context.seedIntent], w.seedIntent, { kind: 'seedIntent', contextId, root, outranks: false });
   }
 
-  // Goals — primary signal, scaled by goal.weight
+  // Goals — priority is the goal's weight.
   for (const goal of goals) {
-    const goalWeight = WEIGHTS.GOAL_BASE * (goal.weight ?? 0.5);
-    applyTerms(dict, [goal.title], goalWeight, { kind: 'goal', contextId, root });
+    applyTerms(dict, [goal.title], itemWeight(w, 'goal', goal.weight ?? 0.5, goal.outranks ?? false),
+      { kind: 'goal', itemId: goal.id, contextId, root, outranks: goal.outranks ?? false });
   }
 
-  // Agent directives and watchwords
-  if (agent) {
-    applyTerms(dict, agent.directives ?? [], WEIGHTS.DIRECTIVE, { kind: 'directive', contextId, root });
-    applyTerms(dict, agent.watchWords ?? [], WEIGHTS.WATCH_WORD, { kind: 'watchWord', contextId, root });
+  // Values, watch words (the context's) and directives (the agent's).
+  const items = [...(context?.values ?? []), ...(context?.watchWords ?? []), ...(agent?.directives ?? [])];
+  for (const item of items) {
+    applyTerms(dict, [item.text], itemWeight(w, item.kind, item.priority, item.outranks),
+      { kind: item.kind, itemId: item.id, contextId, root, outranks: item.outranks });
   }
-
-  // Guiding principles
-  applyTerms(dict, context?.values ?? [], WEIGHTS.VALUE, { kind: 'value', contextId, root });
 }
 
 async function loadIntentionDict(
   contextId: string,
-  store: MemoryStore
+  store: MemoryStore,
+  settings?: IntentionSettings
 ): Promise<IntentionDict> {
   const dict: IntentionDict = { weights: new Map(), sources: new Map() };
-  // Root resolved through the store (parentId === null for this scope), so the
-  // intention dict no longer depends on Prisma.
+  const w = resolveWeights(settings);
   const rootContextId = await store.getRootContextId();
 
   if (rootContextId) {
-    await loadContextSignals(store, rootContextId, dict, true);
+    await loadContextSignals(store, rootContextId, dict, true, w);
   }
 
   if (contextId !== rootContextId) {
-    await loadContextSignals(store, contextId, dict, false);
+    await loadContextSignals(store, contextId, dict, false, w);
   }
 
   return dict;
@@ -193,9 +236,10 @@ export async function buildIntentionMatcher(
   userId: string,
   contextId: string,
   normalizationFactor: number = 3.0,
-  store?: MemoryStore
+  store?: MemoryStore,
+  settings?: IntentionSettings
 ): Promise<IntentionMatcher> {
-  const dict = (await loadIntentionDict(contextId, await resolveStore(userId, store))).weights;
+  const dict = (await loadIntentionDict(contextId, await resolveStore(userId, store), settings)).weights;
 
   return (text: string): number => {
     if (!text) return 0;
@@ -217,10 +261,11 @@ export async function buildEnhancedIntentionMatcher(
     tagBoost?: number;
     contextBoost?: number;
   } = {},
-  store?: MemoryStore
+  store?: MemoryStore,
+  settings?: IntentionSettings
 ): Promise<(candidate: MemoryCandidate) => number> {
   const { normalizationFactor = 3.0, tagBoost = 0.2, contextBoost = 0.1 } = options;
-  const dict = (await loadIntentionDict(contextId, await resolveStore(userId, store))).weights;
+  const dict = (await loadIntentionDict(contextId, await resolveStore(userId, store), settings)).weights;
 
   return (candidate: MemoryCandidate): number => {
     let totalScore = 0;
@@ -271,16 +316,17 @@ export async function annotateWithIntention(
   candidates: MemoryCandidate[],
   useEnhanced: boolean = false,
   store?: MemoryStore,
-  explain: boolean = false
+  explain: boolean = false,
+  settings?: IntentionSettings
 ): Promise<MemoryCandidateWithIntention[]> {
   // Resolve once so both branches (and the dict load) share one store instance.
   const resolved = await resolveStore(userId, store);
   if (useEnhanced) {
-    const matcher = await buildEnhancedIntentionMatcher(userId, contextId, {}, resolved);
+    const matcher = await buildEnhancedIntentionMatcher(userId, contextId, {}, resolved, settings);
     if (!explain) {
       return candidates.map(candidate => ({ ...candidate, intention: matcher(candidate) }));
     }
-    const dict = await loadIntentionDict(contextId, resolved);
+    const dict = await loadIntentionDict(contextId, resolved, settings);
     return candidates.map(candidate => ({
       ...candidate,
       intention: matcher(candidate),
@@ -288,7 +334,7 @@ export async function annotateWithIntention(
       sameContext: candidate.contextId === contextId,
     }));
   } else {
-    const matcher = await buildIntentionMatcher(userId, contextId, 3.0, resolved);
+    const matcher = await buildIntentionMatcher(userId, contextId, 3.0, resolved, settings);
     return candidates.map(candidate => ({ ...candidate, intention: matcher(candidate.content) }));
   }
 }
@@ -482,7 +528,8 @@ export async function searchWithIntention(
     [...entryCandidates, ...artifactCandidates],
     true,
     store,
-    explain
+    explain,
+    deps?.intention
   );
 
   const reranked = rerankWithIntention(candidatesWithIntention, rerankOptions);

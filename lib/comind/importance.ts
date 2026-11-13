@@ -26,7 +26,7 @@ import type { AttributionType } from '@/lib/comind/types';
 /**
  * The capture-time importance blend. All tunable — these are first-guess weights,
  * to be revised as recall-quality data accumulates (same posture as
- * `intentions.ts` WEIGHTS). The maximum reachable score is exactly 1.0
+ * `intentions.ts` DEFAULT_KIND_WEIGHTS). The maximum reachable score is exactly 1.0
  * (FLOOR + GOAL_ALIGN + max attribution + CONFIDENCE·1), so a perfectly aligned,
  * user-stated, fully-confident memory saturates and an off-topic inferred one
  * sits near the floor — a real spread instead of a flat 0.5.

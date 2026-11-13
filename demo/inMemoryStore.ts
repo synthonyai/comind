@@ -22,7 +22,7 @@
  */
 
 import { randomUUID } from "crypto";
-import { nextActivation } from "@/lib/comind";
+import { nextActivation, governingInput } from "@/lib/comind";
 import type {
   MemoryStore,
   NewMemoryEntry,
@@ -45,7 +45,17 @@ import type {
   Context,
   AgentProfile,
   Goal,
+  ContextPatch,
+  AgentProfilePatch,
+  GoverningItem,
+  GoverningItemSeed,
+  GoverningKind,
+  NewGoverningItem,
+  GoverningItemPatch,
 } from "@/lib/comind";
+
+/** Deep-enough copy so callers never mutate the store's lists. */
+const clone = <T extends object>(o: T): T => structuredClone(o);
 
 // --- Operational-signal defaults (mirror the schema's intent; tunable here). ---
 const DEFAULTS = {
@@ -316,24 +326,88 @@ export class InMemoryMemoryStore implements MemoryStore {
       themes: input.themes ?? [],
       constraints: input.constraints ?? [],
       assumptions: input.assumptions ?? [],
-      values: input.values ?? [],
+      values: this.items("value", input.values),
+      watchWords: this.items("watchWord", input.watchWords),
       parentId: input.parentId ?? null,
+      isRoot: input.isRoot ?? false,
       createdAt: new Date(),
     };
+    if (ctx.isRoot && (await this.getRootContextId())) throw new Error("A root context already exists");
     this.contexts.set(ctx.id, ctx);
-    return { ...ctx };
+    return clone(ctx);
   }
 
   async getContext(id: string): Promise<Context | null> {
     const c = this.contexts.get(id);
-    return c ? { ...c } : null;
+    return c ? clone(c) : null;
+  }
+
+  async updateContext(id: string, patch: ContextPatch): Promise<Context> {
+    const c = this.contexts.get(id);
+    if (!c) throw new Error(`Context ${id} not found`);
+    const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+    Object.assign(c, defined);
+    return clone(c);
   }
 
   async getRootContextId(): Promise<string | null> {
     for (const c of this.contexts.values()) {
-      if (c.parentId == null) return c.id;
+      if (c.isRoot) return c.id;
     }
     return null;
+  }
+
+  // --- Governing items (stored with their owner) ----------------------------
+
+  private items(kind: GoverningKind, seeds: GoverningItemSeed[] = []): GoverningItem[] {
+    return seeds.map((seed, i) => {
+      const s = governingInput(seed);
+      return { id: randomUUID(), kind, text: s.text, priority: s.priority ?? 0.5, outranks: s.outranks ?? false, order: s.order ?? i };
+    });
+  }
+
+  /** The list an item lives in: values/watch words on the context, directives on its agent profile. */
+  private ownerList(contextId: string, kind: GoverningKind): GoverningItem[] {
+    if (kind === "directive") {
+      const profile = [...this.agentProfiles.values()].find((p) => p.homeContextId === contextId);
+      if (!profile) throw new Error(`No agent profile for context ${contextId}`);
+      return profile.directives;
+    }
+    const ctx = this.contexts.get(contextId);
+    if (!ctx) throw new Error(`Context ${contextId} not found`);
+    return kind === "value" ? ctx.values : ctx.watchWords;
+  }
+
+  private findItem(id: string): { list: GoverningItem[]; index: number } {
+    const lists = [
+      ...[...this.contexts.values()].flatMap((c) => [c.values, c.watchWords]),
+      ...[...this.agentProfiles.values()].map((p) => p.directives),
+    ];
+    for (const list of lists) {
+      const index = list.findIndex((i) => i.id === id);
+      if (index >= 0) return { list, index };
+    }
+    throw new Error(`Governing item ${id} not found`);
+  }
+
+  async createGoverningItem(input: NewGoverningItem): Promise<GoverningItem> {
+    const list = this.ownerList(input.contextId, input.kind);
+    const [item] = this.items(input.kind, [input]);
+    item.order = input.order ?? list.length;
+    list.push(item);
+    return { ...item };
+  }
+
+  async updateGoverningItem(id: string, patch: GoverningItemPatch): Promise<GoverningItem> {
+    const { list, index } = this.findItem(id);
+    const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+    list[index] = { ...list[index], ...defined };
+    return { ...list[index] };
+  }
+
+  async deleteGoverningItem(id: string): Promise<void> {
+    const { list, index } = this.findItem(id);
+    list.splice(index, 1);
   }
 
   async createGoal(input: NewGoal): Promise<Goal> {
@@ -345,6 +419,7 @@ export class InMemoryMemoryStore implements MemoryStore {
       status: input.status ?? "ACTIVE",
       weight: input.weight ?? 0.5,
       order: input.order ?? null,
+      outranks: input.outranks ?? false,
       parentId: input.parentId ?? null,
     };
     this.goals.set(goal.id, goal);
@@ -361,6 +436,7 @@ export class InMemoryMemoryStore implements MemoryStore {
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.description !== undefined ? { description: patch.description } : {}),
       ...(patch.order !== undefined ? { order: patch.order } : {}),
+      ...(patch.outranks !== undefined ? { outranks: patch.outranks } : {}),
     };
     this.goals.set(id, updated);
     return { ...updated };
@@ -379,18 +455,25 @@ export class InMemoryMemoryStore implements MemoryStore {
       name: input.name ?? null,
       homeContextId: input.homeContextId ?? null,
       description: input.description ?? null,
-      directives: input.directives ?? [],
-      watchWords: input.watchWords ?? [],
+      directives: this.items("directive", input.directives),
     };
     this.agentProfiles.set(profile.id, profile);
-    return { ...profile };
+    return clone(profile);
   }
 
   async getAgentProfileForContext(contextId: string): Promise<AgentProfile | null> {
     for (const p of this.agentProfiles.values()) {
-      if (p.homeContextId === contextId) return { ...p };
+      if (p.homeContextId === contextId) return clone(p);
     }
     return null;
+  }
+
+  async updateAgentProfile(id: string, patch: AgentProfilePatch): Promise<AgentProfile> {
+    const p = this.agentProfiles.get(id);
+    if (!p) throw new Error(`Agent profile ${id} not found`);
+    const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+    Object.assign(p, defined);
+    return clone(p);
   }
 
   async createLink(input: NewMemoryLink): Promise<MemoryLink> {

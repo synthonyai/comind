@@ -20,11 +20,13 @@ import { assembleExtractionPrompt, assembleGuidePrompt } from '@/lib/comind/agen
 import { getRecallData } from '@/lib/comind/agentRuntime/dataFetcher';
 import { applyContextTokenBudget } from '@/lib/comind/agentRuntime/tokenBudget';
 import type { EmbeddingProvider, LLMProvider, MemoryStore } from '@/lib/comind/providers';
+import type { IntentionSettings } from '@/lib/comind/intentions';
 
 export interface TurnDeps {
     store: MemoryStore;
     embeddings: EmbeddingProvider;
     llm: LLMProvider;
+    intention?: IntentionSettings;
 }
 
 const preview = (s: string, n = 160) => s.slice(0, n);
@@ -34,17 +36,18 @@ function frameLens(f: FrameData) {
         seedIntent: f.context?.seedIntent ?? null,
         values: f.context?.values ?? [],
         directives: f.agentProfile?.directives ?? [],
-        watchWords: f.agentProfile?.watchWords ?? [],
+        watchWords: f.context?.watchWords ?? [],
         activeGoals: f.goals
             .filter(g => g.status === 'ACTIVE')
-            .map(g => ({ id: g.id, title: g.title, weight: g.weight })),
+            .map(g => ({ id: g.id, title: g.title, weight: g.weight, outranks: g.outranks })),
     };
 }
 
 /**
  * Step 1 — the guide's reply. Recalls (with `why`), assembles the prompt (root
- * context first), reinforces what was recalled (the living loop: it was used),
- * and starts streaming the answer with the `reply` job.
+ * context first) and starts streaming the answer with the `reply` job.
+ * Nothing is reinforced here: recall alone isn't use. `extract` reinforces the
+ * memories the reply actually drew on.
  */
 export async function reply(
     userId: string,
@@ -53,11 +56,11 @@ export async function reply(
     opts: TurnOptions | undefined,
     deps: TurnDeps
 ): Promise<ReplyTurn> {
-    const { store, embeddings, llm } = deps;
+    const { store, embeddings, llm, intention } = deps;
     const history = opts?.history ?? [];
 
     const raw = await getRecallData({
-        userId, contextId, message, focusEntryIds: opts?.focusEntryIds, deps: { store, embeddings },
+        userId, contextId, message, focusEntryIds: opts?.focusEntryIds, deps: { store, embeddings, intention },
     });
     // Trim the recall-driven blocks BEFORE assembly, so the prompt, activation
     // and the returned input all reflect only what actually went in.
@@ -79,21 +82,15 @@ export async function reply(
         recent: data.recentContext,
     };
 
-    // Activation feedback — every recalled entry/artifact that went into the
-    // prompt was "used"; strengthen its operational signals.
-    await Promise.all([
-        store.activateEntries(data.intentionWeighted.map(e => e.id)),
-        store.activateArtifacts(data.artifacts.map(a => a.id)),
-    ]);
-
     const stream = llm.streamText({ job: 'reply', system: prompt.system, messages: prompt.messages, temperature: 0.7 });
     return { input, stream };
 }
 
 /**
  * Step 2 — extraction. Reads the finished exchange (what the guide was given +
- * its reply), distils typed artifacts with the `extraction` job, and writes them
- * back with provenance and goal links.
+ * its reply), distils typed artifacts with the `extraction` job, writes them
+ * back with provenance and goal links, and reinforces the recalled memories the
+ * reply drew on (the living loop).
  */
 export async function extract(
     input: GuideInput,
@@ -152,7 +149,18 @@ export async function extract(
         store.updateMemoryEntry(u.id, { importanceScore: u.newImportanceScore })
     ));
 
-    return { artifacts, memoryUpdates };
+    // The living loop: reinforce only the recalled memories the reply drew on.
+    const used = new Set(critic.usedMemoryIds ?? []);
+    const activated = {
+        entryIds: input.recalled.entries.map(e => e.id).filter(id => used.has(id)),
+        artifactIds: input.recalled.artifacts.map(a => a.id).filter(id => used.has(id)),
+    };
+    await Promise.all([
+        store.activateEntries(activated.entryIds),
+        store.activateArtifacts(activated.artifactIds),
+    ]);
+
+    return { artifacts, memoryUpdates, activated };
 }
 
 /** Collect a reply stream into one string. */
@@ -191,10 +199,7 @@ export async function runAgent(
             })),
         },
         produced,
-        activated: {
-            entryIds: input.recalled.entries.map(e => e.id),
-            artifactIds: input.recalled.artifacts.map(a => a.id),
-        },
+        activated: produced.activated,
     };
     return { response, trace, input };
 }

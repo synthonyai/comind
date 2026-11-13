@@ -16,7 +16,9 @@ export type { Comind, CreateComindConfig } from "@/lib/comind/createComind";
 // --- Recall result shapes returned by the standalone `recall()` verb: raw
 //     entries and derived artifacts, each carrying its `intention` score. ---
 export type { RecalledEntry, RecalledArtifact } from "@/lib/comind/contextRecall";
-export type { RecallExplanation, RecallSignal, MatchedTerm, IntentionSource } from "@/lib/comind/intentions";
+export type { RecallExplanation, RecallSignal, MatchedTerm, IntentionSource, IntentionSettings, KindWeights } from "@/lib/comind/intentions";
+// The default order between kinds of governing memory (override via `createComind({ intention })`).
+export { DEFAULT_KIND_WEIGHTS } from "@/lib/comind/intentions";
 
 // --- The continuity assembler (v0.2 item B): the pure "wake" function and the
 //     ContinuityState packet it returns. `comind.wake()` is the instance-method
@@ -41,12 +43,21 @@ export type {
   GoalPatch,
   GoalFilters,
   NewContext,
+  ContextPatch,
   NewAgentProfile,
+  AgentProfilePatch,
+  GoverningItemInput,
+  NewGoverningItem,
+  GoverningItemPatch,
   NewMemoryLink,
   MemoryLinkFilters,
   LLMJob,
   ChatMessage,
 } from "@/lib/comind/providers";
+
+// Normalise a governing-item seed (plain string or full input) — for custom stores.
+export { governingInput } from "@/lib/comind/providers";
+export type { GoverningItemSeed } from "@/lib/comind/providers";
 
 // --- The activation reinforcement rule (the living loop). A custom MemoryStore
 //     applies this in its activateEntries/activateArtifacts so recall behaves
@@ -67,6 +78,8 @@ export type {
   Context,
   AgentProfile,
   Goal,
+  GoverningItem,
+  GoverningKind,
   MemoryLink,
   ArtifactSourceLink,
   MemoryType,
@@ -87,6 +100,7 @@ export type {
   ReplyTurn,
   TurnLens,
   FrameLens,
+  LensItem,
   SeenEntry,
   SeenArtifact,
   RunAgentResult,

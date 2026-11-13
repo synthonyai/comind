@@ -143,11 +143,13 @@ The v0.2 demos need no keys.
 | `promote(artifactId)` / `demote(artifactId)` | Keep a conclusion present across sessions, or let it go. |
 | `clear(contextId)` | Forget learned/session memories while keeping profile, goals, and continuity state. |
 | `reply(contextId, message, opts?)` | A guide turn, step 1: recall, then stream the reply. Returns `{ input, stream }` — `input` is exactly what the guide was given. |
-| `extract(input, response)` | A guide turn, step 2: distil decisions, insights, tasks… from the exchange and store them with their sources. You decide when it runs. |
+| `extract(input, response)` | A guide turn, step 2: distil decisions, insights, tasks… from the exchange and store them with their sources, and strengthen only the recalled memories the reply actually drew on. You decide when it runs. |
 | `runAgent(contextId, message, opts?)` | Both steps without streaming; returns `{ response, trace, input }`. |
 | `link(...)` / `listLinks(...)` | Connect two memories with a typed edge of your own vocabulary, and read those edges. |
 | `storeMemory(params)` | Store a raw observation (optionally linked to earlier ones). Importance is judged against the agent's current goals. |
-| `createContext` / `createGoal` / `createAgentProfile` | Set up who the agent is and what it is working toward. |
+| `createContext` / `createGoal` / `createAgentProfile` | Set up who the agent is and what it is working toward. Mark one context `isRoot` — its goals and values apply everywhere and come first. |
+| `updateContext` / `updateGoal` / `updateAgentProfile` | Change them later. |
+| `values` / `watchWords` / `directives` `.add` · `.update` · `.remove` | Edit what the agent steers by. Each item has a `priority` within its kind and can be marked `outranks` (above everything else). The order between kinds is a setting: `createComind({ intention: { kindWeights } })`. |
 
 For hosts and tests, the wake logic is also exported as a standalone function:
 

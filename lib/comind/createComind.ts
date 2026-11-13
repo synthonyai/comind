@@ -14,9 +14,13 @@
  * stores (e.g. the in-memory reference store) ignore it.
  */
 
-import type { MemoryStore, EmbeddingProvider, LLMProvider, NewContext, NewGoal, NewAgentProfile, MemoryEntryFilters, NewMemoryLink, MemoryLinkFilters } from '@/lib/comind/providers';
+import type {
+  MemoryStore, EmbeddingProvider, LLMProvider, NewContext, NewGoal, GoalPatch, NewAgentProfile, MemoryEntryFilters,
+  NewMemoryLink, MemoryLinkFilters, ContextPatch, AgentProfilePatch, GoverningItemInput, GoverningItemPatch,
+} from '@/lib/comind/providers';
+import type { IntentionSettings } from '@/lib/comind/intentions';
 import type { TurnOptions, GuideInput } from '@/lib/comind/agentRuntime/types';
-import type { MemoryType, AttributionType } from '@/lib/comind/types';
+import type { MemoryType, AttributionType, GoverningKind } from '@/lib/comind/types';
 import { recallEntriesAndArtifacts } from '@/lib/comind/contextRecall';
 import { assembleContinuityState, PROMOTION } from '@/lib/comind/continuity';
 import { seedCaptureImportance } from '@/lib/comind/importance';
@@ -30,10 +34,28 @@ export interface CreateComindConfig {
   embeddings: EmbeddingProvider;
   /** The language model, called one named job at a time. Required — there is no default backend. */
   llm: LLMProvider;
+  /**
+   * How governing memory weighs in recall — e.g. the order between kinds
+   * (`kindWeights`). Optional; defaults to `DEFAULT_KIND_WEIGHTS`.
+   */
+  intention?: IntentionSettings;
+}
+
+/**
+ * The verbs for one kind of governing item. Each item is stored with its owner
+ * (values and watch words on the context, directives on its agent profile).
+ * These are the person's direct edits — they apply immediately.
+ */
+function governingVerbs(store: MemoryStore, kind: GoverningKind) {
+  return {
+    add: (contextId: string, item: GoverningItemInput) => store.createGoverningItem({ ...item, contextId, kind }),
+    update: (id: string, patch: GoverningItemPatch) => store.updateGoverningItem(id, patch),
+    remove: (id: string) => store.deleteGoverningItem(id),
+  };
 }
 
 export function createComind(config: CreateComindConfig) {
-  const { userId, store, embeddings, llm } = config;
+  const { userId, store, embeddings, llm, intention } = config;
 
   return {
     /**
@@ -121,7 +143,7 @@ export function createComind(config: CreateComindConfig) {
         limit: opts?.limit,
         searchLimit: opts?.searchLimit,
         explain: opts?.explain,
-        deps: { store, embeddings },
+        deps: { store, embeddings, intention },
       }),
 
     /**
@@ -187,14 +209,14 @@ export function createComind(config: CreateComindConfig) {
 
     /**
      * Step 1 of a guide turn — the reply. Recalls (with `why`), assembles the
-     * prompt (root context first), reinforces what was recalled, and streams the
+     * prompt (root context first) and streams the
      * answer with the `reply` job. Returns `{ input, stream }`: `input` is
      * exactly what the guide was given; consume `stream` once for the text.
      * Lazily imported so importing the barrel pulls in nothing but types.
      */
     reply: async (contextId: string, message: string, opts?: TurnOptions) => {
       const { reply } = await import('@/lib/comind/agentRuntime/turn');
-      return reply(userId, contextId, message, opts, { store, embeddings, llm });
+      return reply(userId, contextId, message, opts, { store, embeddings, llm, intention });
     },
 
     /**
@@ -204,7 +226,7 @@ export function createComind(config: CreateComindConfig) {
      */
     extract: async (input: GuideInput, response: string) => {
       const { extract } = await import('@/lib/comind/agentRuntime/turn');
-      return extract(input, response, { store, embeddings, llm });
+      return extract(input, response, { store, embeddings, llm, intention });
     },
 
     /**
@@ -213,12 +235,25 @@ export function createComind(config: CreateComindConfig) {
      */
     runAgent: async (contextId: string, message: string, opts?: TurnOptions) => {
       const { runAgent } = await import('@/lib/comind/agentRuntime/turn');
-      return runAgent(userId, contextId, message, opts, { store, embeddings, llm });
+      return runAgent(userId, contextId, message, opts, { store, embeddings, llm, intention });
     },
 
+    // --- Governing memory: the person's direct edits (they apply immediately). ---
+
+    /** Create a context. Pass `isRoot: true` for the one whose governing memory applies everywhere. */
     createContext: (input: NewContext) => store.createContext(input),
+    updateContext: (id: string, patch: ContextPatch) => store.updateContext(id, patch),
     createGoal: (input: NewGoal) => store.createGoal(input),
+    /** Change a goal — title, priority (`weight`), status, `outranks`… Completing it drops it from the lens. */
+    updateGoal: (id: string, patch: GoalPatch) => store.updateGoal(id, patch),
     createAgentProfile: (input: NewAgentProfile) => store.createAgentProfile(input),
+    updateAgentProfile: (id: string, patch: AgentProfilePatch) => store.updateAgentProfile(id, patch),
+    /** A context's values: `add(contextId, { text, priority, outranks })`, `update(id, patch)`, `remove(id)`. */
+    values: governingVerbs(store, 'value'),
+    /** A context's watch words — same verbs as `values`. */
+    watchWords: governingVerbs(store, 'watchWord'),
+    /** The agent's directives for a context (its profile must exist) — same verbs as `values`. */
+    directives: governingVerbs(store, 'directive'),
   };
 }
 

@@ -122,6 +122,37 @@ export interface MemoryArtifact {
 }
 
 // ---------------------------------------------------------------------------
+// GoverningItem — one thing the mind steers by (a value, a directive, a watch word)
+// ---------------------------------------------------------------------------
+
+/**
+ * The kinds of governing item. Each is stored with its owner: `value` and
+ * `watchWord` describe the work and live on the `Context`; `directive` describes
+ * how the agent behaves and lives on the `AgentProfile`. Goals are separate
+ * (they have a lifecycle and a hierarchy) but share `priority` (as `weight`)
+ * and `outranks`.
+ */
+export type GoverningKind = 'value' | 'directive' | 'watchWord';
+
+export interface GoverningItem {
+  id: string;
+  kind: GoverningKind;
+  text: string;
+  /**
+   * Importance WITHIN its kind, 0–1 (default 0.5). The order BETWEEN kinds is a
+   * separate setting (`CreateComindConfig.intention.kindWeights`).
+   */
+  priority: number;
+  /**
+   * Comes before every item that doesn't outrank, whatever its kind or context:
+   * top weight in recall, and shown to the model as coming first.
+   */
+  outranks: boolean;
+  /** Display order within its kind (host-managed). */
+  order?: number | null;
+}
+
+// ---------------------------------------------------------------------------
 // Context — a scoped cognitive space
 // ---------------------------------------------------------------------------
 
@@ -138,9 +169,17 @@ export interface Context {
   themes: string[];
   constraints: string[];
   assumptions: string[];
-  values: string[];
+  /** Guiding values for this work, each with its own priority. */
+  values: GoverningItem[];
+  /** Words or patterns that should catch attention (e.g. for a coherence check). */
+  watchWords: GoverningItem[];
 
   parentId?: string | null;
+  /**
+   * The root context: its governing memory applies in every context and comes
+   * first. At most one per store scope (explicit, never inferred).
+   */
+  isRoot: boolean;
 
   createdAt: Date;
 }
@@ -155,8 +194,8 @@ export interface AgentProfile {
   homeContextId?: string | null;
 
   description?: string | null;
-  directives: string[];
-  watchWords: string[];
+  /** How the agent should act — its standing instructions, each with a priority. */
+  directives: GoverningItem[];
 }
 
 // ---------------------------------------------------------------------------
@@ -171,8 +210,11 @@ export interface Goal {
   description?: string | null;
   status: GoalStatus;
 
+  /** Priority among this context's goals, 0–1. */
   weight: number;
   order?: number | null;
+  /** Comes before everything that doesn't outrank (see `GoverningItem.outranks`). */
+  outranks: boolean;
 
   parentId?: string | null;
 }

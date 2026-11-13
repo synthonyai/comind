@@ -38,7 +38,7 @@ const QUERY = "What did we decide about the storage abstraction and the library 
 
 const NULL_CRITIC: StubTurn = {
   response: "STUB",
-  memoryCritic: { artifacts: [], updatesToRecalledMemories: [] },
+  memoryCritic: { artifacts: [], usedMemoryIds: [], updatesToRecalledMemories: [] },
 };
 
 async function seedWorld(store: InMemoryMemoryStore, embeddings: StubEmbeddings) {
@@ -46,12 +46,12 @@ async function seedWorld(store: InMemoryMemoryStore, embeddings: StubEmbeddings)
     name: "Characterization Context",
     seedIntent: "Ship CoMind v0.1 as an embeddable cognitive layer other developers can plug in.",
     values: ["clarity", "developer-trust"],
+    watchWords: ["deadline", "boundary"],
   });
   await store.createAgentProfile({
     homeContextId: ctx.id,
     description: "Characterization agent",
     directives: ["prioritize the storage abstraction", "keep the reference app working"],
-    watchWords: ["deadline", "boundary"],
   });
   await store.createGoal({ contextId: ctx.id, title: "Extract the lib/comind library boundary", weight: 0.9 });
   await store.createGoal({ contextId: ctx.id, title: "Build the CLI demo with an in-memory store", weight: 0.6 });

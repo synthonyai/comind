@@ -31,6 +31,7 @@ function stub(artifactSources?: string[]): StubLLM {
         confidence: 0.8,
         ...(artifactSources ? { sourceEntryIds: artifactSources } : {}),
       }],
+      usedMemoryIds: [],
       updatesToRecalledMemories: [],
     },
   };
@@ -38,17 +39,18 @@ function stub(artifactSources?: string[]): StubLLM {
 }
 
 async function seed(store: InMemoryMemoryStore, embeddings: StubEmbeddings) {
-  // Root first: the in-memory store treats the first top-level context as root.
+  // The root context is marked explicitly.
   const root = await store.createContext({
     name: "Root",
     seedIntent: "Live a healthy, balanced life.",
     values: ["Honesty with myself"],
+    watchWords: ["burnout"],
+    isRoot: true,
   });
   await store.createGoal({ contextId: root.id, title: "Sleep eight hours", weight: 0.9 });
   await store.createAgentProfile({
     homeContextId: root.id,
     directives: ["Name a clash with the root context once, then move on"],
-    watchWords: ["burnout"],
   });
 
   const ctx = await store.createContext({ name: "Fitness", seedIntent: "Run a half marathon.", parentId: root.id });

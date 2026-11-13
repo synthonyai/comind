@@ -10,7 +10,7 @@
 // handle a clash…). Hosts express that through the agent profile's directives —
 // the root context's directives apply in every context.
 
-import type { AgentContextData, FrameData, FrameLens, GuideInput, SeenArtifact, SeenEntry } from '@/lib/comind/agentRuntime/types';
+import type { AgentContextData, FrameData, FrameLens, GuideInput, LensItem, SeenArtifact, SeenEntry } from '@/lib/comind/agentRuntime/types';
 import type { ChatMessage } from '@/lib/comind/providers';
 
 const CONTENT_CAP = 300;
@@ -20,6 +20,23 @@ const clip = (s: string, n = CONTENT_CAP) => {
 };
 const bullets = (items: string[], empty = '- None') =>
     items.length ? items.map(i => `- ${i}`).join('\n') : empty;
+
+/** A governing item's label: outranking items say so; clear high/low priority is named. */
+const tag = (outranks: boolean, priority: number) =>
+    outranks ? ' (comes first)' : priority >= 0.75 ? ' (high priority)' : priority <= 0.25 ? ' (low priority)' : '';
+const items = (list: LensItem[], empty?: string) =>
+    bullets(list.map(i => `${i.text}${tag(i.outranks, i.priority)}`), empty);
+const goalItems = (goals: FrameData['goals'], empty?: string) =>
+    bullets(goals.map(g => `${g.title}${tag(g.outranks, g.weight)}`), empty);
+
+/** Items marked as outranking in a frame — named up front so the model can't miss them. */
+const outranking = (d: FrameData) => [
+    ...d.goals.filter(g => g.outranks).map(g => g.title),
+    ...(d.context?.values ?? []).filter(i => i.outranks).map(i => i.text),
+    ...(d.context?.watchWords ?? []).filter(i => i.outranks).map(i => i.text),
+    ...(d.agentProfile?.directives ?? []).filter(i => i.outranks).map(i => i.text),
+];
+const OUTRANKS_NOTE = 'Items marked "(comes first)" outrank everything else: where anything pulls against them, they win.';
 
 /** The root context block — governing memory that applies in every context. */
 function rootBlock(root: AgentContextData['root']): string {
@@ -32,37 +49,38 @@ function rootBlock(root: AgentContextData['root']): string {
     ];
     if (ctx?.seedIntent) lines.push('', `Intent: ${ctx.seedIntent}`);
     if (ctx?.whyItMatters) lines.push(`Why it matters: ${ctx.whyItMatters}`);
-    if (root.goals.length) lines.push('', '## Goals (highest priority first)', bullets(root.goals.map(g => g.title)));
-    if (ctx?.values.length) lines.push('', '## Values', bullets(ctx.values));
+    if (outranking(root).length) lines.push(OUTRANKS_NOTE);
+    if (root.goals.length) lines.push('', '## Goals (highest priority first)', goalItems(root.goals));
+    if (ctx?.values.length) lines.push('', '## Values (highest priority first)', items(ctx.values));
     if (ctx?.constraints.length) lines.push('', '## Constraints', bullets(ctx.constraints));
-    if (root.agentProfile?.directives.length) lines.push('', '## Instructions (apply in every context)', bullets(root.agentProfile.directives));
-    if (root.agentProfile?.watchWords.length) lines.push('', `## Watch Words\n${root.agentProfile.watchWords.join(', ')}`);
+    if (root.agentProfile?.directives.length) lines.push('', '## Instructions (apply in every context)', items(root.agentProfile.directives));
+    if (ctx?.watchWords.length) lines.push('', '## Watch Words', items(ctx.watchWords));
     return lines.join('\n') + '\n\n';
 }
 
 /** This context's own frame. */
 function frameBlock(data: FrameData): string {
     const { agentProfile, context, goals } = data;
-    return `# This Context
+    return `# This Context${outranking(data).length ? `\n${OUTRANKS_NOTE}` : ''}
 - Intent: ${context?.seedIntent || 'Not defined'}
 - Why it matters: ${context?.whyItMatters || 'Not defined'}
 - Description: ${context?.description || 'Not defined'}
 - Current direction: ${context?.direction || 'Not defined'}
 
-## Values
-${bullets(context?.values ?? [])}
+## Values (highest priority first)
+${items(context?.values ?? [])}
 
 ## Constraints
 ${bullets(context?.constraints ?? [])}
 
 ## Active Goals (highest priority first)
-${bullets(goals.map(g => g.title), '- No active goals')}
+${goalItems(goals, '- No active goals')}
 
 ## Instructions
-${bullets(agentProfile?.directives ?? [])}
+${items(agentProfile?.directives ?? [])}
 
 ## Watch Words
-${agentProfile?.watchWords?.length ? agentProfile.watchWords.join(', ') : 'None'}`;
+${items(context?.watchWords ?? [])}`;
 }
 
 function memoryBlock(
@@ -167,6 +185,9 @@ from. When an artifact advances an active goal, add 'goalLinks' (the goal's [ID:
    meaning; emit an EMPTY array when nothing genuinely new emerged. No filler.
 2. Consider the whole conversation, not just the last message.
 3. Don't repeat a past reflection unless the exchange changed or confirmed it.
-4. If the exchange relied heavily on specific recalled memories, list them in
+4. In 'usedMemoryIds', list the [ID:…]s of the relevant memories and past reflections
+   the Guide's reply actually drew on — what shaped what it said. Leave out anything
+   that was recalled but played no part. Empty when the reply used none.
+5. If the exchange relied heavily on specific recalled memories, list them in
    'updatesToRecalledMemories' with a boosted 'newImportanceScore'.`;
 }

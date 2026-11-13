@@ -61,12 +61,12 @@ async function main() {
     name: "Datastore decisions",
     seedIntent: "Decide and record the datastore architecture.",
     values: ["relational integrity"],
+    watchWords: ["database", "storage"],
   });
   await store.createAgentProfile({
     homeContextId: ctx.id,
     description: "Architecture guide",
     directives: ["record decisions with rationale"],
-    watchWords: ["database", "storage"],
   });
   const goal = await store.createGoal({ contextId: ctx.id, title: "Ship the single-store architecture", weight: 0.8 });
 
@@ -96,6 +96,7 @@ async function main() {
         sourceEntryIds: entryIds,
         goalLinks: [{ goalId: goal.id, strength: 0.8, rationale: "Realizes the single-store goal." }],
       }],
+      usedMemoryIds: entryIds,
       updatesToRecalledMemories: [],
     },
   });

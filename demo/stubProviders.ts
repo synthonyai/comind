@@ -43,7 +43,7 @@ export class ScriptedLLM implements LLMProvider {
   private pending: ScriptedTurn | null = null;
   private readonly empty: ScriptedTurn = {
     response: "",
-    memoryCritic: { artifacts: [], updatesToRecalledMemories: [] },
+    memoryCritic: { artifacts: [], usedMemoryIds: [], updatesToRecalledMemories: [] },
   };
   setNext(output: ScriptedTurn): void {
     this.pending = output;

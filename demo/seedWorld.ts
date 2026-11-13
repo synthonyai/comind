@@ -30,6 +30,7 @@ export async function seedWorld(
     seedIntent: world.context.seedIntent,
     direction: world.context.direction,
     values: world.context.values,
+    watchWords: world.profile.watchWords,
     constraints: world.context.constraints,
   });
 
@@ -38,7 +39,6 @@ export async function seedWorld(
     name: world.profile.name,
     description: world.profile.description,
     directives: world.profile.directives,
-    watchWords: world.profile.watchWords,
   });
 
   const goalKeyToId: Record<string, string> = {};

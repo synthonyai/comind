@@ -33,12 +33,12 @@ async function seed(store: InMemoryMemoryStore, embeddings: StubEmbeddings) {
   const ctx = await store.createContext({
     name: "RunAgent Context",
     seedIntent: "Decide and record the datastore architecture for the project.",
+    watchWords: ["database", "storage"],
   });
   await store.createAgentProfile({
     homeContextId: ctx.id,
     description: "Architecture guide",
     directives: ["record decisions with rationale"],
-    watchWords: ["database", "storage"],
   });
   const goal = await store.createGoal({
     contextId: ctx.id,
@@ -73,6 +73,7 @@ function stubFor(entryIds: string[], goalId: string): StubLLM {
           goalLinks: [{ goalId, strength: 0.8, rationale: "Realizes the single-store goal." }],
         },
       ],
+      usedMemoryIds: entryIds,
       updatesToRecalledMemories: [],
     },
   };

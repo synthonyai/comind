@@ -1,6 +1,6 @@
 // lib/comind/agentRuntime/types.ts
 import { z } from 'zod';
-import type { AttributionType } from '@/lib/comind/types';
+import type { AttributionType, GoverningItem } from '@/lib/comind/types';
 import type { ChatMessage } from '@/lib/comind/providers';
 import type { RecallExplanation } from '@/lib/comind/intentions';
 
@@ -33,6 +33,9 @@ export const extractionSchema = z.object({
             rationale: z.string().optional(),
         })).optional(),
     })).default([]),
+    // Which recalled memories (entries or reflections, by [ID:…]) the guide's reply
+    // actually drew on. Only these are reinforced — recall alone is not use.
+    usedMemoryIds: z.array(z.string()).default([]),
     updatesToRecalledMemories: z.array(z.object({
         id: z.string(),
         newImportanceScore: z.number().min(0).max(1),
@@ -63,14 +66,17 @@ export interface TurnOptions {
     instructions?: string[];
 }
 
-/** The governing lens of one frame, as shown to the guide. */
+/** A governing item as the guide saw it. */
+export type LensItem = Pick<GoverningItem, 'id' | 'text' | 'priority' | 'outranks'>;
+
+/** The governing lens of one frame, as shown to the guide. Lists: outranking first, then by priority. */
 export interface FrameLens {
     seedIntent: string | null;
-    values: string[];
-    directives: string[];
-    watchWords: string[];
-    /** Goals with status ACTIVE, highest weight first. */
-    activeGoals: { id: string; title: string; weight: number }[];
+    values: LensItem[];
+    directives: LensItem[];
+    watchWords: LensItem[];
+    /** Goals with status ACTIVE, outranking first, then highest weight. */
+    activeGoals: { id: string; title: string; weight: number; outranks: boolean }[];
 }
 
 /**
@@ -146,6 +152,8 @@ export interface ExtractionResult {
         goalLinks: { goalId: string; strength?: number; rationale?: string }[];
     }[];
     memoryUpdates: { id: string; newImportanceScore: number }[];
+    /** Recalled memories the reply drew on, and so were reinforced (the living loop). */
+    activated: { entryIds: string[]; artifactIds: string[] };
 }
 
 /**
@@ -165,7 +173,7 @@ export interface DecisionTrace {
         artifacts: { id: string; type: string; preview: string; intention: number; confidence: number }[];
     };
     produced: ExtractionResult;
-    /** Operational-signal reinforcement (the living loop) applied this turn. */
+    /** Operational-signal reinforcement (the living loop): only what the reply drew on. */
     activated: { entryIds: string[]; artifactIds: string[] };
 }
 
@@ -184,8 +192,7 @@ export interface FrameData {
     agentProfile: {
         name: string;
         description: string;
-        directives: string[];
-        watchWords: string[];
+        directives: LensItem[];
     } | null;
     context: {
         seedIntent: string | null;
@@ -196,9 +203,10 @@ export interface FrameData {
         themes: string[];
         constraints: string[];
         assumptions: string[];
-        values: string[];
+        values: LensItem[];
+        watchWords: LensItem[];
     } | null;
-    goals: { id: string; title: string; status: string; weight: number }[];
+    goals: { id: string; title: string; status: string; weight: number; outranks: boolean }[];
 }
 
 /** The structured data a guide turn is assembled from (internal). */

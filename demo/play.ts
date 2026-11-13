@@ -90,6 +90,7 @@ function buildOfflineOutput(
           rationale: a.goalRationale,
         })),
       })),
+      usedMemoryIds: (turn.offline.artifacts ?? []).flatMap((a) => (a.sourceKeys ?? []).map((k) => recordKeyToId[k]).filter(Boolean)),
       updatesToRecalledMemories: [],
     },
   };

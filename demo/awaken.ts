@@ -119,8 +119,8 @@ async function buildView(
 
   return {
     name: state.governing.agentProfile?.name ?? "IRIS",
-    directives: state.governing.agentProfile?.directives ?? [],
-    values: state.governing.context?.values ?? [],
+    directives: (state.governing.agentProfile?.directives ?? []).map((d) => d.text),
+    values: (state.governing.context?.values ?? []).map((v) => v.text),
     ridingWithMe,
     surfacedNow,
     focus,
@@ -140,7 +140,6 @@ async function seed() {
     homeContextId: ctx.id,
     name: "IRIS",
     directives: ["ground every claim in a source", "flag assumptions"],
-    watchWords: [],
   });
   const gStorage = await store.createGoal({
     contextId: ctx.id,
