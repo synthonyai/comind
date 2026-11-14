@@ -5,7 +5,7 @@
  * Phase 3 of V01_IMPLEMENTATION_PLAN.md — additive and DORMANT. Mirrors the
  * normalize + length-check behavior of the inline `embed`/`embedQuery` helpers
  * in `memory.ts`, so stored and query vectors stay unit-length (consistent with
- * the `<->` distance used by PrismaMemoryStore.searchSimilar).
+ * the cosine distance stores return — see `SimilarityHit.distance`).
  */
 
 import { generateEmbedding } from '@/lib/comind/embeddings';

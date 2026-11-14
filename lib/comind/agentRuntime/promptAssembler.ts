@@ -91,7 +91,7 @@ function memoryBlock(
     const date = (d: Date) => new Date(d).toISOString().slice(0, 10);
     const reflections = mem.artifacts.length
         ? mem.artifacts.map(a => `${id(a)}[${a.type}] (${date(a.createdAt)}, confidence ${Math.round(a.confidence * 100)}%) ${clip(a.content)}`).join('\n')
-        : 'None yet.';
+        : 'None found.';
     const relevant = mem.relevant.length
         ? mem.relevant.map(e => `${id(e)}(${date(e.timestamp)}) ${clip(e.content)}`).join('\n')
         : 'None found.';

@@ -41,6 +41,13 @@ export const DEFAULT_KIND_WEIGHTS: KindWeights = {
 export interface IntentionSettings {
   /** Override the order between kinds (any subset). */
   kindWeights?: Partial<KindWeights>;
+  /**
+   * Minimum cosine similarity to the query for a memory to be recalled at all.
+   * Overrides the embedding provider's `relevanceFloor`; 0 turns the cutoff off.
+   * Goals and values only reorder memories that pass it — they can't pull in
+   * one that isn't about the message.
+   */
+  relevanceFloor?: number;
 }
 
 /** Resolved weights, including the band outranking items sit in (above every other item). */
@@ -142,12 +149,25 @@ export interface RecallExplanation {
   replacedEntryIds: string[];
 }
 
+// Common words that say nothing about what a goal or value is about. Without
+// this, "Get one or two other people testing it" matched any memory containing
+// "other" or "people". English only for now (the matcher itself is lexical —
+// matching goals by meaning is a later upgrade).
+const STOPWORDS = new Set(`
+about above after again against also among because been before being below between both
+could does doing done down during each either even ever every from further have having here
+into itself just keep like make made many more most much must need never only other others
+over really same should since some still such than that their theirs them then there these
+they thing things this those through under until upon very want well were what when where
+which while will with within without would your yours yourself
+`.split(/\s+/).filter(Boolean));
+
 function tokenizeTerms(phrase: string): string[] {
   return phrase
     .toLowerCase()
-    .split(/[,\s]+/)
+    .split(/[^\p{L}\p{N}'-]+/u)
     .map(word => word.trim())
-    .filter(word => word.length > 3);
+    .filter(word => word.length > 3 && !STOPWORDS.has(word));
 }
 
 /** The intention lens: term -> weight, plus which governing item each term came from. */
@@ -521,11 +541,20 @@ export async function searchWithIntention(
     sourceEntryIds: h.sourceEntryIds,
   }));
 
+  // Relevance floor: a memory must be about the message before anything else
+  // counts. Goals/values, recency and importance only REORDER what passes —
+  // they can't pull in a memory that isn't about what was said. The number is
+  // model-specific (the embedding provider declares it); an app can override.
+  const floor = deps?.intention?.relevanceFloor ?? embeddings.relevanceFloor ?? 0;
+  const relevant = [...entryCandidates, ...artifactCandidates].filter(
+    (c) => floor <= 0 || (c.dist !== undefined && 1 - c.dist >= floor)
+  );
+
   const explain = rerankOptions?.explain ?? false;
   const candidatesWithIntention = await annotateWithIntention(
     userId,
     contextId,
-    [...entryCandidates, ...artifactCandidates],
+    relevant,
     true,
     store,
     explain,

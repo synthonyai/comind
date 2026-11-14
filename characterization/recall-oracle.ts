@@ -139,6 +139,70 @@ async function main() {
     checkTrue("its source entry is superseded (collapsed under the artifact)", !sourceEntryRecalled);
   }
 
+  // === Part C — relevance floor: memories must be about the message ========
+  // Goals/values only REORDER what passes the floor; they can't pull in a
+  // memory that isn't about what was said (found in Touchstone 2026-11-14:
+  // every memory came up for every message).
+  {
+    // No words in common with any memory (the stub embedder is bag-of-words, so
+    // filler like "the"/"for" counts as overlap — keep the off-topic query clean).
+    const OFF_TOPIC = "banana bread recipe";
+    const FLOOR = 0.2;
+
+    // No floor (today's default when the provider declares none): an off-topic
+    // message still pulls in memories, lifted by the goals and values.
+    {
+      const store = new InMemoryMemoryStore();
+      const embeddings = new StubEmbeddings();
+      const { ctx } = await seedWorld(store, embeddings);
+      const comind = createComind({ userId: "demo", store, embeddings, llm: new StubLLM(NULL_CRITIC) });
+      const r = await comind.recall(ctx.id, OFF_TOPIC);
+      checkTrue("without a floor, an off-topic message still recalls memories", r.entries.length > 0, { n: r.entries.length });
+    }
+
+    // Floor set by the app: off-topic recalls nothing; on-topic keeps what it's about.
+    {
+      const store = new InMemoryMemoryStore();
+      const embeddings = new StubEmbeddings();
+      const { ctx, entryIds } = await seedWorld(store, embeddings);
+      const comind = createComind({ userId: "demo", store, embeddings, llm: new StubLLM(NULL_CRITIC), intention: { relevanceFloor: FLOOR } });
+      const off = await comind.recall(ctx.id, OFF_TOPIC);
+      check("with a floor, an off-topic message recalls nothing", off.entries.length + off.artifacts.length, 0);
+      const on = await comind.recall(ctx.id, QUERY, { explain: true });
+      console.log("[recall] Part C — on-topic with floor:", on.entries.map((e) => `${e.why!.signals.similarity.value.toFixed(2)} "${e.content.slice(0, 40)}…"`));
+      checkTrue("the storage-decision memory still comes up", on.entries.some((e) => e.id === entryIds[0]));
+      checkTrue("everything recalled is past the floor", on.entries.every((e) => e.why!.signals.similarity.value >= FLOOR));
+    }
+
+    // Floor declared by the embedding provider (it knows its model); the app can turn it off with 0.
+    {
+      class FlooredEmbeddings extends StubEmbeddings { readonly relevanceFloor = FLOOR; }
+      const store = new InMemoryMemoryStore();
+      const embeddings = new FlooredEmbeddings();
+      const { ctx } = await seedWorld(store, embeddings);
+      const declared = createComind({ userId: "demo", store, embeddings, llm: new StubLLM(NULL_CRITIC) });
+      check("the provider's declared floor applies", (await declared.recall(ctx.id, OFF_TOPIC)).entries.length, 0);
+      const off = createComind({ userId: "demo", store, embeddings, llm: new StubLLM(NULL_CRITIC), intention: { relevanceFloor: 0 } });
+      checkTrue("the app can override it (0 = off)", (await off.recall(ctx.id, OFF_TOPIC)).entries.length > 0);
+    }
+  }
+
+  // === Part D — filler words in goals don't count as matches ================
+  {
+    const store = new InMemoryMemoryStore();
+    const embeddings = new StubEmbeddings();
+    const ctx = await store.createContext({ name: "Filler", seedIntent: "" });
+    await store.createGoal({ contextId: ctx.id, title: "Get one or two other people testing it before that deadline", weight: 0.9 });
+    const text = "I just think that other people would like this.";
+    await store.createMemoryEntry({ contextId: ctx.id, type: "NOTE", content: text, tags: [], embedding: await embeddings.embed(text) });
+    const comind = createComind({ userId: "demo", store, embeddings, llm: new StubLLM(NULL_CRITIC) });
+    const r = await comind.recall(ctx.id, text, { explain: true });
+    const terms = r.entries[0]?.why?.matched.map((m) => m.term) ?? [];
+    console.log("[recall] Part D — goal terms matched:", terms);
+    check("filler words (other, that, …) don't match a goal", terms.filter((t) => ["other", "that", "just", "would", "like"].includes(t)).length, 0);
+    checkTrue("real words still do", terms.includes("people"));
+  }
+
   report();
 }
 

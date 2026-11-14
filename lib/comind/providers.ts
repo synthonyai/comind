@@ -86,7 +86,7 @@ export interface MemoryEntryFilters {
   limit?: number;
 }
 
-/** A vector similarity query. The store owns its own distance math. */
+/** A vector similarity query. The store computes the distance — cosine (see `SimilarityHit.distance`). */
 export interface SimilaritySearch {
   /** Query vector, already produced by the EmbeddingProvider. */
   vector: number[];
@@ -99,7 +99,11 @@ export interface SimilaritySearch {
 /** One nearest-neighbour result: the full entry plus its raw distance. */
 export interface SimilarityHit {
   entry: MemoryEntry;
-  /** Store-native distance (smaller = closer). Not comparable across stores. */
+  /**
+   * COSINE distance: `1 - cosine similarity` (0 = same meaning, smaller = closer).
+   * Recall scores similarity as `1 - distance`, so any other metric (e.g. L2 /
+   * pgvector `<->`) silently breaks ranking — use pgvector `<=>`.
+   */
   distance: number;
 }
 
@@ -112,7 +116,11 @@ export interface ArtifactSimilarityHit {
   artifact: MemoryArtifact;
   /** Source entries this artifact was distilled from (provenance). */
   sourceEntryIds: string[];
-  /** Store-native distance (smaller = closer). Not comparable across stores. */
+  /**
+   * COSINE distance: `1 - cosine similarity` (0 = same meaning, smaller = closer).
+   * Recall scores similarity as `1 - distance`, so any other metric (e.g. L2 /
+   * pgvector `<->`) silently breaks ranking — use pgvector `<=>`.
+   */
   distance: number;
 }
 
@@ -430,6 +438,16 @@ export interface MemoryStore {
 export interface EmbeddingProvider {
   /** Output dimension. The Phase 7 guardrail checks this against the store. */
   readonly dimensions: number;
+
+  /**
+   * Optional: the cosine similarity at which, FOR THIS MODEL, a memory starts
+   * being about the same thing as the query (e.g. ~0.55 for EmbeddingGemma,
+   * lower for models whose unrelated text already scores low). Recall drops
+   * anything below it before ranking, so an unrelated message recalls nothing.
+   * Omit for no cutoff. Apps can override it via `createComind({ intention:
+   * { relevanceFloor } })`.
+   */
+  readonly relevanceFloor?: number;
 
   /** Embed text that will be stored as a memory/document. */
   embed(text: string): Promise<number[]>;
