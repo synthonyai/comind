@@ -243,7 +243,14 @@ export function createComind(config: CreateComindConfig) {
 
     /** Create a context. Pass `isRoot: true` for the one whose governing memory applies everywhere. */
     createContext: (input: NewContext) => store.createContext(input),
-    updateContext: (id: string, patch: ContextPatch) => store.updateContext(id, patch),
+    /** Change a context. Moving it (`parentId`) under itself or a descendant throws. */
+    updateContext: async (id: string, patch: ContextPatch) => {
+      for (let at = patch.parentId ?? null, n = 0; at; n++) {
+        if (at === id || n > 64) throw new Error(`updateContext: moving ${id} there would put it under itself.`);
+        at = (await store.getContext(at))?.parentId ?? null;
+      }
+      return store.updateContext(id, patch);
+    },
     /**
      * Create a goal — something to complete, or (`standing: true`) an ongoing
      * value with no finish line. May carry `signs` and the ids of the goals it

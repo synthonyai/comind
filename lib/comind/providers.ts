@@ -234,6 +234,8 @@ export interface ContextPatch {
   themes?: string[];
   constraints?: string[];
   assumptions?: string[];
+  /** Move the context under another (null = top level). Changes what it inherits. */
+  parentId?: string | null;
 }
 
 /** Mutable fields on an agent profile. */

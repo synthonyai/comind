@@ -323,6 +323,12 @@ async function main() {
     checkTrue("…but not its guide's directives", !sys.includes("Only the Health guide says this") && sys.includes("Fitness rule"));
     checkTrue("a goal says what it serves", sys.includes("- stretch — serves: sleep"));
     check("the lens carries inherited frames", turn.input.lens.inherited.map((f) => [f.name, f.activeGoals.map((g) => g.title)]), [["Health", ["sleep"]]]);
+    await comind.updateContext(child.id, { parentId: root.id });
+    check("moving a context changes what it inherits", (await comind.wake(child.id)).governing.inherited.length, 0);
+    await comind.updateContext(child.id, { parentId: area.id });
+    let refused = false;
+    try { await comind.updateContext(area.id, { parentId: child.id }); } catch { refused = true; }
+    checkTrue("a context can't be moved under its own child", refused && (await store.getContext(area.id))?.parentId === root.id);
     checkTrue("extraction sees inherited goals too", (await (async () => { const l = new StubLLM(out()); const c2 = createComind({ userId: "demo", store, embeddings, llm: l });
       await c2.extract(turn.input, "ok"); return l.calls[0]?.prompt ?? ""; })()).includes(`[ID:${sleep.id}] sleep (weight 0.5, ongoing)`));
   }
