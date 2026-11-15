@@ -114,7 +114,8 @@ From what they said, draft:
   (empty when none, or when no list is given).
 - WATCH WORDS — short words or phrases that, if they show up in the person's entries,
   suggest they're drifting from these goals (e.g. "skipped", "too tired").${params.include?.intent ? `
-- INTENT — one line, in their words, saying what this area is about for them.` : ''}${params.include?.children ? `
+- INTENT — one line, in their words, saying what this area is about for them. Don't also
+  list the intent (or a rewording of it) as a goal: goals are what it rests on or leads to.` : ''}${params.include?.children ? `
 - CHILDREN — the main areas this breaks into, as they described them (name, a one-line
   intent in their words, why). Usually 2–6.` : ''}
 
