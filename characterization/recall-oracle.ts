@@ -45,7 +45,6 @@ async function seedWorld(store: InMemoryMemoryStore, embeddings: StubEmbeddings)
   const ctx = await store.createContext({
     name: "Characterization Context",
     seedIntent: "Ship CoMind v0.1 as an embeddable cognitive layer other developers can plug in.",
-    values: ["clarity", "developer-trust"],
     watchWords: ["deadline", "boundary"],
   });
   await store.createAgentProfile({
@@ -55,6 +54,8 @@ async function seedWorld(store: InMemoryMemoryStore, embeddings: StubEmbeddings)
   });
   await store.createGoal({ contextId: ctx.id, title: "Extract the lib/comind library boundary", weight: 0.9 });
   await store.createGoal({ contextId: ctx.id, title: "Build the CLI demo with an in-memory store", weight: 0.6 });
+  await store.createGoal({ contextId: ctx.id, title: "clarity", standing: true });
+  await store.createGoal({ contextId: ctx.id, title: "developer-trust", standing: true });
 
   const entryIds: string[] = [];
   for (const m of MEMORIES) {

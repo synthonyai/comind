@@ -31,6 +31,7 @@ import type {
   AgentProfile,
   Goal,
   GoalStatus,
+  GoalSigns,
   GoverningItem,
   GoverningKind,
   GoverningSuggestion,
@@ -140,6 +141,12 @@ export interface NewGoal {
   weight?: number;
   order?: number | null;
   outranks?: boolean;
+  /** Ongoing, no finish line (default false). See `Goal.standing`. */
+  standing?: boolean;
+  /** Ids of goals this one supports (default none). See `Goal.supports`. */
+  supports?: string[];
+  /** See `Goal.signs` (default none). */
+  signs?: Partial<GoalSigns>;
   parentId?: string | null;
 }
 
@@ -161,6 +168,11 @@ export interface GoalPatch {
   description?: string | null;
   order?: number | null;
   outranks?: boolean;
+  standing?: boolean;
+  /** Replaces the whole list. */
+  supports?: string[];
+  /** Replaces each list given. */
+  signs?: Partial<GoalSigns>;
 }
 
 /** A governing item as supplied on create (inline with a context/profile, or on its own). */
@@ -182,8 +194,8 @@ export function governingInput(seed: GoverningItemSeed): GoverningItemInput {
 }
 
 /**
- * Create one governing item. It is stored with its owner: `value` / `watchWord`
- * on the context, `directive` on the context's agent profile (which must exist).
+ * Create one governing item. It is stored with its owner: `watchWord` on the
+ * context, `directive` on the context's agent profile (which must exist).
  */
 export interface NewGoverningItem extends GoverningItemInput {
   contextId: string;
@@ -205,6 +217,10 @@ export interface NewGoverningSuggestion {
   text: string;
   priority?: number;
   rationale?: string | null;
+  /** For a goal. */
+  standing?: boolean;
+  /** For a goal. */
+  supports?: string[];
 }
 
 /** Mutable fields on a context — the person's direct edits. */
@@ -255,7 +271,6 @@ export interface NewContext {
   themes?: string[];
   constraints?: string[];
   assumptions?: string[];
-  values?: GoverningItemSeed[];
   watchWords?: GoverningItemSeed[];
   parentId?: string | null;
   /**
@@ -413,7 +428,7 @@ export interface MemoryStore {
   getAgentProfileForContext(contextId: string): Promise<AgentProfile | null>;
   updateAgentProfile(id: string, patch: AgentProfilePatch): Promise<AgentProfile>;
 
-  // --- Governing items (values, directives, watch words) ---
+  // --- Governing items (directives, watch words) ---
   createGoverningItem(input: NewGoverningItem): Promise<GoverningItem>;
   updateGoverningItem(id: string, patch: GoverningItemPatch): Promise<GoverningItem>;
   deleteGoverningItem(id: string): Promise<void>;
@@ -470,7 +485,7 @@ export interface EmbeddingProvider {
  * - `extraction` — distilling durable meaning (decisions, insights, tasks…) from
  *                  an exchange, after the reply.
  * - `summary`    — writing the mind's own understanding of a context.
- * - `drafting`   — proposing governing memory (goals, values, watch words) from
+ * - `drafting`   — proposing governing memory (goals, watch words) from
  *                  what the person said.
  *
  * Reserved for jobs the library will add: `coherence`, `loop-closing`. A host may

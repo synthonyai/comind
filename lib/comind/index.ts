@@ -18,7 +18,7 @@ export type { Comind, CreateComindConfig } from "@/lib/comind/createComind";
 export type { RecalledEntry, RecalledArtifact } from "@/lib/comind/contextRecall";
 export type { RecallExplanation, RecallSignal, MatchedTerm, IntentionSource, IntentionSettings, KindWeights } from "@/lib/comind/intentions";
 // The default order between kinds of governing memory (override via `createComind({ intention })`).
-export { DEFAULT_KIND_WEIGHTS } from "@/lib/comind/intentions";
+export { DEFAULT_KIND_WEIGHTS, DEFAULT_INHERITED_WEIGHT } from "@/lib/comind/intentions";
 
 // --- The continuity assembler (v0.2 item B): the pure "wake" function and the
 //     ContinuityState packet it returns. `comind.wake()` is the instance-method
@@ -92,6 +92,7 @@ export type {
   MemoryArtifactType,
   AttributionType,
   GoalStatus,
+  GoalSigns,
 } from "@/lib/comind/types";
 
 // --- Agent runtime: a guide turn as two steps (`reply` streamed, then
@@ -107,6 +108,7 @@ export type {
   TurnLens,
   FrameLens,
   LensItem,
+  LensGoal,
   SeenEntry,
   SeenArtifact,
   RunAgentResult,

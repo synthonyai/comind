@@ -122,17 +122,17 @@ export interface MemoryArtifact {
 }
 
 // ---------------------------------------------------------------------------
-// GoverningItem — one thing the mind steers by (a value, a directive, a watch word)
+// GoverningItem — one thing the mind steers by (a directive or a watch word)
 // ---------------------------------------------------------------------------
 
 /**
- * The kinds of governing item. Each is stored with its owner: `value` and
- * `watchWord` describe the work and live on the `Context`; `directive` describes
- * how the agent behaves and lives on the `AgentProfile`. Goals are separate
- * (they have a lifecycle and a hierarchy) but share `priority` (as `weight`)
- * and `outranks`.
+ * The kinds of governing item. Each is stored with its owner: `watchWord`
+ * describes the work and lives on the `Context`; `directive` describes how the
+ * agent behaves and lives on the `AgentProfile`. What the person steers BY —
+ * things to achieve and standing commitments alike — are goals (see `Goal`,
+ * `standing`), which share `priority` (as `weight`) and `outranks`.
  */
-export type GoverningKind = 'value' | 'directive' | 'watchWord';
+export type GoverningKind = 'directive' | 'watchWord';
 
 export interface GoverningItem {
   id: string;
@@ -163,6 +163,10 @@ export interface GoverningSuggestion {
   /** What it would add: a goal, or a governing item of this kind. */
   kind: 'goal' | GoverningKind;
   text: string;
+  /** For a goal: ongoing (no finish line) rather than completable. */
+  standing?: boolean;
+  /** For a goal: ids of goals it would support (see `Goal.supports`). */
+  supports?: string[];
   /** Proposed priority (goal weight / item priority), 0–1. */
   priority: number;
   /** Why the mind suggests it (shown to the person). */
@@ -188,8 +192,6 @@ export interface Context {
   themes: string[];
   constraints: string[];
   assumptions: string[];
-  /** Guiding values for this work, each with its own priority. */
-  values: GoverningItem[];
   /** Words or patterns that should catch attention (e.g. for a coherence check). */
   watchWords: GoverningItem[];
 
@@ -234,8 +236,33 @@ export interface Goal {
   order?: number | null;
   /** Comes before everything that doesn't outrank (see `GoverningItem.outranks`). */
   outranks: boolean;
+  /**
+   * Ongoing, with no finish line — a standing commitment or principle ("eat at
+   * regular times") rather than something to complete ("run a 10k"). A standing
+   * goal is never COMPLETED (it can be PAUSED or ARCHIVED); the guide must not
+   * treat it as stalled or ask whether it is done.
+   */
+  standing: boolean;
+  /**
+   * Ids of other goals this one supports — in any context, typically a broader
+   * goal in an ancestor or the root context ("lights out by 11" supports
+   * "stabilized energy"). Many-to-many; empty when it supports none.
+   */
+  supports: string[];
+  /**
+   * Concrete, observable signs of this goal, in the person's words: what it
+   * looks like when it's being lived (`positive`) and when it's drifting
+   * (`negative`). They make an abstract goal recognisable in what gets written.
+   */
+  signs: GoalSigns;
 
   parentId?: string | null;
+}
+
+/** See `Goal.signs`. */
+export interface GoalSigns {
+  positive: string[];
+  negative: string[];
 }
 
 // ---------------------------------------------------------------------------

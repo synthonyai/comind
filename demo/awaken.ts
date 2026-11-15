@@ -105,7 +105,7 @@ async function buildView(
     own: true,
   }));
 
-  const goals = state.foreground.activeGoals;
+  const goals = state.foreground.activeGoals.filter((g) => !g.standing);
   const maxW = Math.max(...goals.map((g) => g.weight), 0);
   const focus = goals
     .slice()
@@ -120,7 +120,7 @@ async function buildView(
   return {
     name: state.governing.agentProfile?.name ?? "IRIS",
     directives: (state.governing.agentProfile?.directives ?? []).map((d) => d.text),
-    values: (state.governing.context?.values ?? []).map((v) => v.text),
+    values: state.foreground.activeGoals.filter((g) => g.standing).map((g) => g.title),
     ridingWithMe,
     surfacedNow,
     focus,
@@ -134,8 +134,8 @@ async function seed() {
   const ctx = await store.createContext({
     name: "Infra decision",
     seedIntent: "Help choose our infra approach on solid evidence.",
-    values: ["evidence over recency"],
   });
+  await store.createGoal({ contextId: ctx.id, title: "evidence over recency", standing: true });
   await store.createAgentProfile({
     homeContextId: ctx.id,
     name: "IRIS",

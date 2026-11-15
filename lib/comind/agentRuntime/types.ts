@@ -66,17 +66,28 @@ export interface TurnOptions {
     instructions?: string[];
 }
 
+/** A goal as the guide saw it. `supports` holds the titles of the goals it supports. */
+export interface LensGoal {
+    id: string;
+    title: string;
+    status: string;
+    weight: number;
+    outranks: boolean;
+    standing: boolean;
+    signs: { positive: string[]; negative: string[] };
+    supports: { id: string; title: string }[];
+}
+
 /** A governing item as the guide saw it. */
 export type LensItem = Pick<GoverningItem, 'id' | 'text' | 'priority' | 'outranks'>;
 
 /** The governing lens of one frame, as shown to the guide. Lists: outranking first, then by priority. */
 export interface FrameLens {
     seedIntent: string | null;
-    values: LensItem[];
     directives: LensItem[];
     watchWords: LensItem[];
     /** Goals with status ACTIVE, outranking first, then highest weight. */
-    activeGoals: { id: string; title: string; weight: number; outranks: boolean }[];
+    activeGoals: LensGoal[];
 }
 
 /**
@@ -86,6 +97,8 @@ export interface FrameLens {
  */
 export interface TurnLens extends FrameLens {
     root: (FrameLens & { contextId: string }) | null;
+    /** Lenses inherited from the contexts between the root and this one, farthest first. */
+    inherited: (FrameLens & { contextId: string; name: string | null })[];
 }
 
 /** A memory entry as the guide saw it. */
@@ -203,16 +216,20 @@ export interface FrameData {
         themes: string[];
         constraints: string[];
         assumptions: string[];
-        values: LensItem[];
         watchWords: LensItem[];
     } | null;
-    goals: { id: string; title: string; status: string; weight: number; outranks: boolean }[];
+    goals: LensGoal[];
 }
 
 /** The structured data a guide turn is assembled from (internal). */
 export interface AgentContextData extends FrameData {
     /** The root context's frame — applies everywhere. Null when none / this IS the root. */
     root: (FrameData & { contextId: string }) | null;
+    /**
+     * Frames inherited from the contexts between the root and this one (its
+     * ancestors), farthest first — their goals and watch words apply here too.
+     */
+    inherited: (FrameData & { contextId: string; name: string | null })[];
     intentionWeighted: SeenEntry[];
     recentContext: SeenEntry[];
     artifacts: SeenArtifact[];

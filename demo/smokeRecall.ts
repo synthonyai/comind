@@ -22,7 +22,6 @@ async function main() {
   const ctx = await store.createContext({
     name: "Datastore decisions",
     seedIntent: "Decide and record the datastore architecture.",
-    values: ["relational integrity"],
     watchWords: ["database", "storage"],
   });
   await store.createAgentProfile({
@@ -30,6 +29,7 @@ async function main() {
     description: "Architecture guide",
     directives: ["record decisions with rationale"],
   });
+  await store.createGoal({ contextId: ctx.id, title: "relational integrity", standing: true });
   const goal = await store.createGoal({ contextId: ctx.id, title: "Ship the single-store architecture", weight: 0.8 });
 
   const contents = [

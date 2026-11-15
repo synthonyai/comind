@@ -20,7 +20,7 @@ import type {
 } from '@/lib/comind/providers';
 import type { IntentionSettings } from '@/lib/comind/intentions';
 import type { TurnOptions, GuideInput } from '@/lib/comind/agentRuntime/types';
-import type { MemoryType, AttributionType, GoverningKind, GoverningSuggestion } from '@/lib/comind/types';
+import type { MemoryType, AttributionType, GoalStatus, GoverningKind, GoverningSuggestion } from '@/lib/comind/types';
 import type { DraftSubject } from '@/lib/comind/governance';
 import { recallEntriesAndArtifacts } from '@/lib/comind/contextRecall';
 import { assembleContinuityState, PROMOTION } from '@/lib/comind/continuity';
@@ -44,7 +44,7 @@ export interface CreateComindConfig {
 
 /**
  * The verbs for one kind of governing item. Each item is stored with its owner
- * (values and watch words on the context, directives on its agent profile).
+ * (watch words on the context, directives on its agent profile).
  * These are the person's direct edits — they apply immediately.
  */
 function governingVerbs(store: MemoryStore, kind: GoverningKind) {
@@ -130,7 +130,7 @@ export function createComind(config: CreateComindConfig) {
      * - `limit` caps the hydrated rows (omit to return all survivors).
      * - `searchLimit` (default 8) is the per-table candidate pool before rerank.
      * - `explain` attaches `why` to each row: the score, the six signals, and the
-     *   governing items (goal, value, seed intent…) that boosted it. Same ranking.
+     *   governing items (goal, sign, seed intent…) that boosted it. Same ranking.
      */
     recall: (
       contextId: string,
@@ -244,39 +244,54 @@ export function createComind(config: CreateComindConfig) {
     /** Create a context. Pass `isRoot: true` for the one whose governing memory applies everywhere. */
     createContext: (input: NewContext) => store.createContext(input),
     updateContext: (id: string, patch: ContextPatch) => store.updateContext(id, patch),
+    /**
+     * Create a goal — something to complete, or (`standing: true`) an ongoing
+     * value with no finish line. May carry `signs` and the ids of the goals it
+     * `supports` (typically broader ones in an ancestor or the root context).
+     */
     createGoal: (input: NewGoal) => store.createGoal(input),
-    /** Change a goal — title, priority (`weight`), status, `outranks`… Completing it drops it from the lens. */
+    /**
+     * Change a goal — title, priority (`weight`), status, `outranks`, `standing`,
+     * `signs`, `supports`… Completing or pausing it drops it from the lens.
+     */
     updateGoal: (id: string, patch: GoalPatch) => store.updateGoal(id, patch),
+    /** All of a context's goals (any status, or only `status`). */
+    listGoals: (contextId: string, status?: GoalStatus) => store.listGoals({ contextId, status }),
     createAgentProfile: (input: NewAgentProfile) => store.createAgentProfile(input),
     updateAgentProfile: (id: string, patch: AgentProfilePatch) => store.updateAgentProfile(id, patch),
-    /** A context's values: `add(contextId, { text, priority, outranks })`, `update(id, patch)`, `remove(id)`. */
-    values: governingVerbs(store, 'value'),
-    /** A context's watch words — same verbs as `values`. */
+    /** A context's watch words: `add(contextId, { text, priority, outranks })`, `update(id, patch)`, `remove(id)`. */
     watchWords: governingVerbs(store, 'watchWord'),
-    /** The agent's directives for a context (its profile must exist) — same verbs as `values`. */
+    /** The agent's directives for a context (its profile must exist) — same verbs as `watchWords`. */
     directives: governingVerbs(store, 'directive'),
 
     // --- The mind's part: it proposes; the person decides. ---
 
     /**
-     * Draft goals, values and watch words from what the person said (a setup
+     * Draft goals (completable or standing, with signs and the broader goals
+     * they support) and watch words from what the person said (a setup
      * conversation, a description…) with the `drafting` job. Nothing is stored:
      * show the drafts for approval, and keep any undecided ones with
-     * `suggestions.add`. Knows the root context (and `contextId`'s own items, if
-     * given) so it doesn't repeat them.
+     * `suggestions.add`. Knows the root context, the contexts above (`contextId`'s
+     * ancestors, or `parentId` for a new one) and `contextId`'s own items, so it
+     * doesn't repeat them. `include` also asks for an intent line and sub-areas.
      */
-    draftGoverning: async (params: { about: DraftSubject; text: string; contextId?: string }) => {
+    draftGoverning: async (params: {
+      about: DraftSubject; text: string; contextId?: string; parentId?: string | null;
+      include?: { intent?: boolean; children?: boolean };
+    }) => {
       const { draftGoverning } = await import('@/lib/comind/governance');
       return draftGoverning(params, { store, llm });
     },
 
     /** Governing changes the mind proposes, waiting for the person's OK. */
     suggestions: {
-      add: (contextId: string, s: { kind: GoverningSuggestion['kind']; text: string; priority?: number; rationale?: string | null }) =>
-        store.createSuggestion({ ...s, contextId }),
+      add: (contextId: string, s: {
+        kind: GoverningSuggestion['kind']; text: string; priority?: number; rationale?: string | null;
+        standing?: boolean; supports?: string[];
+      }) => store.createSuggestion({ ...s, contextId }),
       list: (contextId: string, status: GoverningSuggestion['status'] = 'pending') => store.listSuggestions(contextId, status),
       /** Apply it (optionally in the person's own words / priority), then mark it approved. */
-      approve: async (id: string, edits?: { text?: string; priority?: number; outranks?: boolean }) => {
+      approve: async (id: string, edits?: { text?: string; priority?: number; outranks?: boolean; standing?: boolean; supports?: string[] }) => {
         const { approveSuggestion } = await import('@/lib/comind/governance');
         return approveSuggestion(id, edits, store);
       },

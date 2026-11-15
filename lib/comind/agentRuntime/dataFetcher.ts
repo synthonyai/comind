@@ -2,10 +2,10 @@
 
 import type { AgentContextData, FrameData, LensItem, SeenEntry } from '@/lib/comind/agentRuntime/types';
 import { recallEntriesAndArtifacts } from '@/lib/comind/contextRecall';
-import { loadFrame, loadRootFrame, type Frame } from '@/lib/comind/continuity';
+import { loadFrame, loadInheritedFrames, loadRootFrame, type Frame } from '@/lib/comind/continuity';
 import type { RecallDeps } from '@/lib/comind/intentions';
 import type { MemoryStore } from '@/lib/comind/providers';
-import type { GoverningItem, MemoryEntry } from '@/lib/comind/types';
+import type { Goal, GoverningItem, MemoryEntry } from '@/lib/comind/types';
 
 /** How many recent entries a turn sees from its own context. */
 const RECENT_LIMIT = 5;
@@ -31,8 +31,12 @@ export function rankItems(items: GoverningItem[]): LensItem[] {
         .map(({ id, text, priority, outranks }) => ({ id, text, priority, outranks }));
 }
 
-/** Shape one governing frame for the prompt. Every list: outranking first, then by priority. */
-function frameData({ agent, context, goals }: Frame): FrameData {
+/**
+ * Shape one governing frame for the prompt. Every list: outranking first, then
+ * by priority. `titles` resolves a goal's `supports` ids to titles (goals from
+ * every frame the turn sees); ids it can't resolve are left out.
+ */
+export function frameData({ agent, context, goals }: Frame, titles: Map<string, string> = new Map()): FrameData {
     return {
         // Only the core AgentProfile fields drive the cognitive prompt. Styling
         // (tone, formality…) is the host's concern.
@@ -50,13 +54,25 @@ function frameData({ agent, context, goals }: Frame): FrameData {
             themes: context.themes || [],
             constraints: context.constraints || [],
             assumptions: context.assumptions || [],
-            values: rankItems(context.values || []),
             watchWords: rankItems(context.watchWords || []),
         } : null,
         goals: [...goals]
             .sort((a, b) => Number(b.outranks) - Number(a.outranks) || b.weight - a.weight)
-            .map(g => ({ id: g.id, title: g.title, status: g.status, weight: g.weight, outranks: g.outranks ?? false })),
+            .map(g => ({
+                id: g.id, title: g.title, status: g.status, weight: g.weight,
+                outranks: g.outranks ?? false,
+                standing: g.standing ?? false,
+                signs: { positive: g.signs?.positive ?? [], negative: g.signs?.negative ?? [] },
+                supports: (g.supports ?? []).flatMap(id => titles.has(id) ? [{ id, title: titles.get(id)! }] : []),
+            })),
     };
+}
+
+/** Goal id → title, across frames (resolves `supports`). */
+export function goalTitles(frames: (Frame | null)[]): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const f of frames) for (const g of (f?.goals ?? []) as Goal[]) map.set(g.id, g.title);
+    return map;
 }
 
 /**
@@ -78,11 +94,12 @@ export async function getRecallData(params: {
     const store: MemoryStore | undefined = deps?.store;
     if (!store) throw new Error('CoMind: recall requires an injected MemoryStore (no default backend).');
 
-    const [frame, root, recall, recent, focus] = await Promise.all([
+    const [frame, root, inherited, recall, recent, focus] = await Promise.all([
         // Governing/foreground frames via the same loaders `wake()` uses, so the
         // guide and the continuity packet never drift.
         loadFrame(store, contextId),
         loadRootFrame(store, contextId),
+        loadInheritedFrames(store, contextId),
         // Entries AND artifacts compete in one rerank. The pool is widened by the
         // number of focus entries, which are dropped below (they're likely the
         // closest match to the message — they are what it's about).
@@ -94,9 +111,11 @@ export async function getRecallData(params: {
         Promise.all([...focusIds].map(id => store.getMemoryEntry(id))),
     ]);
 
+    const titles = goalTitles([frame, root, ...inherited]);
     return {
-        ...frameData(frame),
-        root: root ? { contextId: root.contextId, ...frameData(root) } : null,
+        ...frameData(frame, titles),
+        root: root ? { contextId: root.contextId, ...frameData(root, titles) } : null,
+        inherited: inherited.map(f => ({ contextId: f.contextId, name: f.context?.name ?? null, ...frameData(f, titles) })),
         intentionWeighted: recall.entries
             .filter(e => !focusIds.has(e.id))
             .map(e => seenEntry(e, e.intention)),

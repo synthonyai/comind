@@ -26,13 +26,26 @@ const tag = (outranks: boolean, priority: number) =>
     outranks ? ' (comes first)' : priority >= 0.75 ? ' (high priority)' : priority <= 0.25 ? ' (low priority)' : '';
 const items = (list: LensItem[], empty?: string) =>
     bullets(list.map(i => `${i.text}${tag(i.outranks, i.priority)}`), empty);
-const goalItems = (goals: FrameData['goals'], empty?: string) =>
-    bullets(goals.map(g => `${g.title}${tag(g.outranks, g.weight)}`), empty);
+/**
+ * A goal line: its title, tags, whether it's ongoing (a standing value — no
+ * finish line), what it serves, then its signs on indented lines.
+ */
+const goalLine = (g: FrameData['goals'][number]) => {
+    const head = `${g.title}${tag(g.outranks, g.weight)}${g.standing ? ' (ongoing)' : ''}` +
+        (g.supports.length ? ` — serves: ${g.supports.map(x => x.title).join('; ')}` : '');
+    const signs = [
+        g.signs.positive.length ? `\n  · when it's lived: ${g.signs.positive.join('; ')}` : '',
+        g.signs.negative.length ? `\n  · when it's drifting: ${g.signs.negative.join('; ')}` : '',
+    ].join('');
+    return head + signs;
+};
+const goalItems = (goals: FrameData['goals'], empty?: string) => bullets(goals.map(goalLine), empty);
+const GOALS_HEADING = '## Goals & values (highest priority first)';
+const ONGOING_NOTE = '"(ongoing)" marks a standing value with no finish line: never ask whether it is done or call it stalled.';
 
 /** Items marked as outranking in a frame — named up front so the model can't miss them. */
 const outranking = (d: FrameData) => [
     ...d.goals.filter(g => g.outranks).map(g => g.title),
-    ...(d.context?.values ?? []).filter(i => i.outranks).map(i => i.text),
     ...(d.context?.watchWords ?? []).filter(i => i.outranks).map(i => i.text),
     ...(d.agentProfile?.directives ?? []).filter(i => i.outranks).map(i => i.text),
 ];
@@ -50,12 +63,32 @@ function rootBlock(root: AgentContextData['root']): string {
     if (ctx?.seedIntent) lines.push('', `Intent: ${ctx.seedIntent}`);
     if (ctx?.whyItMatters) lines.push(`Why it matters: ${ctx.whyItMatters}`);
     if (outranking(root).length) lines.push(OUTRANKS_NOTE);
-    if (root.goals.length) lines.push('', '## Goals (highest priority first)', goalItems(root.goals));
-    if (ctx?.values.length) lines.push('', '## Values (highest priority first)', items(ctx.values));
+    if (root.goals.length) lines.push('', GOALS_HEADING, goalItems(root.goals));
     if (ctx?.constraints.length) lines.push('', '## Constraints', bullets(ctx.constraints));
     if (root.agentProfile?.directives.length) lines.push('', '## Instructions (apply in every context)', items(root.agentProfile.directives));
     if (ctx?.watchWords.length) lines.push('', '## Watch Words', items(ctx.watchWords));
     return lines.join('\n') + '\n\n';
+}
+
+/**
+ * Frames inherited from the contexts between the root and this one, farthest
+ * first: their goals and watch words apply here too, a little above this
+ * context's own (their directives belong to their own guide and stay there).
+ */
+function inheritedBlock(inherited: AgentContextData['inherited']): string {
+    return inherited.map(f => {
+        const ctx = f.context;
+        const lines: string[] = [
+            `# From ${f.name || 'a wider context'} — the wider context this one sits in`,
+            "Its direction applies here too and weighs a little above this context's own.",
+        ];
+        if (ctx?.seedIntent) lines.push('', `Intent: ${ctx.seedIntent}`);
+        if (outranking({ ...f, agentProfile: null }).length) lines.push(OUTRANKS_NOTE);
+        if (f.goals.length) lines.push('', GOALS_HEADING, goalItems(f.goals));
+        if (ctx?.constraints.length) lines.push('', '## Constraints', bullets(ctx.constraints));
+        if (ctx?.watchWords.length) lines.push('', '## Watch Words', items(ctx.watchWords));
+        return lines.join('\n') + '\n\n';
+    }).join('');
 }
 
 /** This context's own frame. */
@@ -67,14 +100,11 @@ function frameBlock(data: FrameData): string {
 - Description: ${context?.description || 'Not defined'}
 - Current direction: ${context?.direction || 'Not defined'}
 
-## Values (highest priority first)
-${items(context?.values ?? [])}
+${GOALS_HEADING}
+${goalItems(goals, '- None set')}
 
 ## Constraints
 ${bullets(context?.constraints ?? [])}
-
-## Active Goals (highest priority first)
-${goalItems(goals, '- No active goals')}
 
 ## Instructions
 ${items(agentProfile?.directives ?? [])}
@@ -126,7 +156,9 @@ export function assembleGuidePrompt(
 You have a long-term memory of this person's entries and past conversations; use it
 naturally — refer back to what matters, don't recite it.
 
-${instructions.length ? `# How to work\n${bullets(instructions)}\n\n` : ''}${rootBlock(data.root)}${frameBlock(data)}
+${instructions.length ? `# How to work\n${bullets(instructions)}\n\n` : ''}${ONGOING_NOTE}
+
+${rootBlock(data.root)}${inheritedBlock(data.inherited)}${frameBlock(data)}
 
 ${memoryBlock({ artifacts: data.artifacts, relevant: data.intentionWeighted, recent: data.recentContext }, false)}
 
@@ -151,15 +183,20 @@ const focusBlock = (focus: SeenEntry[]) =>
  * Built from the turn's `GuideInput`, so it sees exactly what the guide saw.
  */
 export function assembleExtractionPrompt(input: GuideInput, response: string): string {
-    const goalLines = (goals: FrameLens['activeGoals']) => goals.map(g => `- [ID:${g.id}] ${g.title} (weight ${g.weight})`);
+    const goalLines = (goals: FrameLens['activeGoals']) =>
+        goals.map(g => `- [ID:${g.id}] ${g.title} (weight ${g.weight}${g.standing ? ', ongoing' : ''})`);
     const root = input.lens.root;
-    const allGoals = [...goalLines(input.lens.activeGoals), ...(root ? goalLines(root.activeGoals) : [])];
+    const allGoals = [
+        ...goalLines(input.lens.activeGoals),
+        ...input.lens.inherited.flatMap(f => goalLines(f.activeGoals)),
+        ...(root ? goalLines(root.activeGoals) : []),
+    ];
     const mem = { artifacts: input.recalled.artifacts, relevant: input.recalled.entries, recent: input.recent };
 
     return `You are the memory critic of an AI memory system. Read the exchange below and distil
 any DURABLE meaning worth remembering into typed artifacts.
 
-# Active Goals (this context${root ? ' and the root context' : ''})
+# Active Goals & values (this context${input.lens.inherited.length ? ', the contexts it sits in' : ''}${root ? ' and the root context' : ''})
 ${allGoals.length ? allGoals.join('\n') : '- None'}
 
 ${focusBlock(input.focus)}${memoryBlock(mem, true)}

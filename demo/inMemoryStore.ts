@@ -328,7 +328,6 @@ export class InMemoryMemoryStore implements MemoryStore {
       themes: input.themes ?? [],
       constraints: input.constraints ?? [],
       assumptions: input.assumptions ?? [],
-      values: this.items("value", input.values),
       watchWords: this.items("watchWord", input.watchWords),
       parentId: input.parentId ?? null,
       isRoot: input.isRoot ?? false,
@@ -368,7 +367,7 @@ export class InMemoryMemoryStore implements MemoryStore {
     });
   }
 
-  /** The list an item lives in: values/watch words on the context, directives on its agent profile. */
+  /** The list an item lives in: watch words on the context, directives on its agent profile. */
   private ownerList(contextId: string, kind: GoverningKind): GoverningItem[] {
     if (kind === "directive") {
       const profile = [...this.agentProfiles.values()].find((p) => p.homeContextId === contextId);
@@ -377,12 +376,12 @@ export class InMemoryMemoryStore implements MemoryStore {
     }
     const ctx = this.contexts.get(contextId);
     if (!ctx) throw new Error(`Context ${contextId} not found`);
-    return kind === "value" ? ctx.values : ctx.watchWords;
+    return ctx.watchWords;
   }
 
   private findItem(id: string): { list: GoverningItem[]; index: number } {
     const lists = [
-      ...[...this.contexts.values()].flatMap((c) => [c.values, c.watchWords]),
+      ...[...this.contexts.values()].map((c) => c.watchWords),
       ...[...this.agentProfiles.values()].map((p) => p.directives),
     ];
     for (const list of lists) {
@@ -425,11 +424,12 @@ export class InMemoryMemoryStore implements MemoryStore {
       text: input.text,
       priority: input.priority ?? 0.5,
       rationale: input.rationale ?? null,
+      ...(input.kind === "goal" ? { standing: input.standing ?? false, supports: [...(input.supports ?? [])] } : {}),
       status: "pending",
       createdAt: new Date(),
     };
     this.suggestions.set(s.id, s);
-    return { ...s };
+    return clone(s);
   }
 
   async getSuggestion(id: string): Promise<GoverningSuggestion | null> {
@@ -460,10 +460,13 @@ export class InMemoryMemoryStore implements MemoryStore {
       weight: input.weight ?? 0.5,
       order: input.order ?? null,
       outranks: input.outranks ?? false,
+      standing: input.standing ?? false,
+      supports: [...(input.supports ?? [])],
+      signs: { positive: [...(input.signs?.positive ?? [])], negative: [...(input.signs?.negative ?? [])] },
       parentId: input.parentId ?? null,
     };
     this.goals.set(goal.id, goal);
-    return { ...goal };
+    return clone(goal);
   }
 
   async updateGoal(id: string, patch: GoalPatch): Promise<Goal> {
@@ -477,16 +480,22 @@ export class InMemoryMemoryStore implements MemoryStore {
       ...(patch.description !== undefined ? { description: patch.description } : {}),
       ...(patch.order !== undefined ? { order: patch.order } : {}),
       ...(patch.outranks !== undefined ? { outranks: patch.outranks } : {}),
+      ...(patch.standing !== undefined ? { standing: patch.standing } : {}),
+      ...(patch.supports !== undefined ? { supports: [...patch.supports] } : {}),
+      signs: {
+        positive: [...(patch.signs?.positive ?? existing.signs.positive)],
+        negative: [...(patch.signs?.negative ?? existing.signs.negative)],
+      },
     };
     this.goals.set(id, updated);
-    return { ...updated };
+    return clone(updated);
   }
 
   async listGoals(filters: GoalFilters): Promise<Goal[]> {
     let rows = [...this.goals.values()].filter((g) => g.contextId === filters.contextId);
     if (filters.status) rows = rows.filter((g) => g.status === filters.status);
     rows.sort((a, b) => b.weight - a.weight);
-    return rows.map((g) => ({ ...g }));
+    return rows.map((g) => clone(g));
   }
 
   async createAgentProfile(input: NewAgentProfile): Promise<AgentProfile> {

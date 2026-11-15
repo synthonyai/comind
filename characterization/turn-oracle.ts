@@ -43,11 +43,11 @@ async function seed(store: InMemoryMemoryStore, embeddings: StubEmbeddings) {
   const root = await store.createContext({
     name: "Root",
     seedIntent: "Live a healthy, balanced life.",
-    values: ["Honesty with myself"],
     watchWords: ["burnout"],
     isRoot: true,
   });
   await store.createGoal({ contextId: root.id, title: "Sleep eight hours", weight: 0.9 });
+  await store.createGoal({ contextId: root.id, title: "Honesty with myself", standing: true });
   await store.createAgentProfile({
     homeContextId: root.id,
     directives: ["Name a clash with the root context once, then move on"],
@@ -89,12 +89,12 @@ async function main() {
     checkTrue("prompt has the root context section", system.includes("Root Context"));
     checkTrue("prompt has the root goal", system.includes("Sleep eight hours"));
     checkTrue("prompt has the root directive", system.includes("Name a clash with the root context once"));
-    checkTrue("prompt has the root value", system.includes("Honesty with myself"));
+    checkTrue("prompt has the root standing goal", system.includes("Honesty with myself"));
     checkTrue("prompt has this context's goal", system.includes("Run three times a week"));
     checkTrue("root section comes before this context",
       system.indexOf("Root Context") < system.indexOf("# This Context"));
     check("lens.root.contextId", turn.input.lens.root?.contextId, root.id);
-    check("lens.root goal titles", turn.input.lens.root?.activeGoals.map((g) => g.title), ["Sleep eight hours"]);
+    check("lens.root goal titles", turn.input.lens.root?.activeGoals.map((g) => g.title), ["Sleep eight hours", "Honesty with myself"]);
     check("last message sent is the new one", turn.input.prompt.messages.at(-1)?.content, "Should I run in the evening instead?");
 
     console.log("[turn] extract runs as its own job…");
@@ -106,7 +106,7 @@ async function main() {
     console.log("[turn] wake carries the root; the root itself has none…");
     const awake = await comind.wake(ctx.id);
     check("wake governing.root.contextId", awake.governing.root?.contextId, root.id);
-    check("wake root goals", awake.governing.root?.activeGoals.map((g) => g.title), ["Sleep eight hours"]);
+    check("wake root goals", awake.governing.root?.activeGoals.map((g) => g.title), ["Sleep eight hours", "Honesty with myself"]);
     const ruled = await comind.reply(ctx.id, "Quick one.", { instructions: ["HOUSE RULE: keep replies under 50 words"] });
     for await (const _ of ruled.stream) { /* drain */ }
     checkTrue("host instructions reach the prompt", ruled.input.prompt.system.includes("HOUSE RULE: keep replies under 50 words"));

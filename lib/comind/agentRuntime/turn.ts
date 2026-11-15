@@ -34,12 +34,9 @@ const preview = (s: string, n = 160) => s.slice(0, n);
 function frameLens(f: FrameData) {
     return {
         seedIntent: f.context?.seedIntent ?? null,
-        values: f.context?.values ?? [],
         directives: f.agentProfile?.directives ?? [],
         watchWords: f.context?.watchWords ?? [],
-        activeGoals: f.goals
-            .filter(g => g.status === 'ACTIVE')
-            .map(g => ({ id: g.id, title: g.title, weight: g.weight, outranks: g.outranks })),
+        activeGoals: f.goals.filter(g => g.status === 'ACTIVE'),
     };
 }
 
@@ -70,6 +67,7 @@ export async function reply(
     const lens: TurnLens = {
         ...frameLens(data),
         root: data.root ? { contextId: data.root.contextId, ...frameLens(data.root) } : null,
+        inherited: data.inherited.map(f => ({ contextId: f.contextId, name: f.name, ...frameLens(f) })),
     };
     const input: GuideInput = {
         contextId,

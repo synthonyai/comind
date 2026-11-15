@@ -85,6 +85,36 @@ export async function loadRootFrame(store: MemoryStore, contextId: string): Prom
   return { contextId: rootId, ...(await loadFrame(store, rootId)) };
 }
 
+/**
+ * The contexts between the root and `contextId` — its ancestors, FARTHEST
+ * first, the root and `contextId` itself excluded. Their governing memory
+ * flows down to `contextId` (a parent's goals apply in its children). Walks
+ * `parentId`; stops at the root, at a missing parent, or after `MAX_DEPTH`
+ * (guards a cycle).
+ */
+export async function loadAncestorIds(store: MemoryStore, contextId: string): Promise<string[]> {
+  const MAX_DEPTH = 16;
+  const rootId = await store.getRootContextId();
+  const chain: string[] = [];
+  const seen = new Set<string>([contextId]);
+  let current = await store.getContext(contextId);
+  while (current?.parentId && chain.length < MAX_DEPTH) {
+    const parentId = current.parentId;
+    if (parentId === rootId || seen.has(parentId)) break;
+    seen.add(parentId);
+    current = await store.getContext(parentId);
+    if (!current) break;
+    chain.push(parentId);
+  }
+  return chain.reverse();
+}
+
+/** The inherited frames — each ancestor's frame (see `loadAncestorIds`), farthest first. */
+export async function loadInheritedFrames(store: MemoryStore, contextId: string): Promise<(Frame & { contextId: string })[]> {
+  const ids = await loadAncestorIds(store, contextId);
+  return Promise.all(ids.map(async id => ({ contextId: id, ...(await loadFrame(store, id)) })));
+}
+
 /** The assembled standing state — the return value of a wake. */
 export interface ContinuityState {
   contextId: string;
@@ -103,6 +133,17 @@ export interface ContinuityState {
       context: Context | null;
       activeGoals: Goal[];
     } | null;
+    /**
+     * Governing memory inherited from the contexts between the root and this
+     * one (its ancestors), farthest first — it applies here too. Empty for a
+     * top-level context.
+     */
+    inherited: {
+      contextId: string;
+      agentProfile: AgentProfile | null;
+      context: Context | null;
+      activeGoals: Goal[];
+    }[];
   };
 
   /** #2 Foreground — where the mind is pointed now. */
@@ -149,9 +190,10 @@ export async function assembleContinuityState(params: {
   const store = deps?.store;
   if (!store) throw new Error('CoMind: assembleContinuityState requires an injected MemoryStore (no default backend).');
 
-  const [{ agent, context, goals }, root, summary, promotedArtifacts] = await Promise.all([
+  const [{ agent, context, goals }, root, inherited, summary, promotedArtifacts] = await Promise.all([
     loadFrame(store, contextId),
     loadRootFrame(store, contextId),
+    loadInheritedFrames(store, contextId),
     // Carryover — the session-end SUMMARY, loaded FIRST at wake by rule (v0.2
     // item C). "Where we left off" — makes a wake *resume* instead of *restart*.
     store.getLatestSummary(contextId),
@@ -166,6 +208,7 @@ export async function assembleContinuityState(params: {
       agentProfile: agent,
       context,
       root: root ? { contextId: root.contextId, agentProfile: root.agent, context: root.context, activeGoals: root.goals } : null,
+      inherited: inherited.map(f => ({ contextId: f.contextId, agentProfile: f.agent, context: f.context, activeGoals: f.goals })),
     },
     foreground: { contextId, activeGoals: goals },
     carryover: { summary },

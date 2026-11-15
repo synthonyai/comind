@@ -1,5 +1,6 @@
 // lib/comind/intentions.ts
 import type { EmbeddingProvider, MemoryStore } from "@/lib/comind/providers";
+import { loadAncestorIds } from "@/lib/comind/continuity";
 
 type IntentionMatcher = (text: string) => number;
 
@@ -18,33 +19,43 @@ export interface RecallDeps {
 /**
  * The order BETWEEN kinds of governing memory. Each number is the recall weight
  * of an item of that kind at MEDIUM priority (0.5); an item's own priority (0–1)
- * scales it from 0× to 2× (goals use their `weight` as priority). `seedIntent`
- * is a context's single intent line and has no priority.
+ * scales it from 0× to 2× (goals use their `weight` as priority — standing and
+ * completable alike, and a goal's signs count at its weight). `seedIntent` is a
+ * context's single intent line and has no priority.
  */
 export interface KindWeights {
   seedIntent: number;
   goal: number;
-  value: number;
   directive: number;
   watchWord: number;
 }
 
-/** Defaults: goals lead; directives, values and watch words follow. */
+/** Defaults: goals lead; directives and watch words follow. */
 export const DEFAULT_KIND_WEIGHTS: KindWeights = {
   seedIntent: 1.5,
   goal: 0.75,   // a goal at weight 1 → 1.5
-  value: 0.7,
   directive: 0.9,
   watchWord: 0.6,
 };
+
+/** Default multiplier for governing memory inherited from ancestor contexts. */
+export const DEFAULT_INHERITED_WEIGHT = 1.25;
 
 export interface IntentionSettings {
   /** Override the order between kinds (any subset). */
   kindWeights?: Partial<KindWeights>;
   /**
+   * Multiplier for goals and watch words INHERITED from the contexts between
+   * the root and this one (its ancestors) — default 1.25, so a parent's items
+   * weigh a little more than the context's own at the same priority. 1 = same
+   * weight. Outranking items are unaffected (they sit in their own band, above
+   * everything). Directives don't flow down: they belong to their own agent.
+   */
+  inheritedWeight?: number;
+  /**
    * Minimum cosine similarity to the query for a memory to be recalled at all.
    * Overrides the embedding provider's `relevanceFloor`; 0 turns the cutoff off.
-   * Goals and values only reorder memories that pass it — they can't pull in
+   * Goals only reorder memories that pass it — they can't pull in
    * one that isn't about the message.
    */
   relevanceFloor?: number;
@@ -52,22 +63,33 @@ export interface IntentionSettings {
 
 /** Resolved weights, including the band outranking items sit in (above every other item). */
 interface ResolvedWeights extends KindWeights {
+  inheritedWeight: number;
   outranksBase: number;
 }
 
 function resolveWeights(settings?: IntentionSettings): ResolvedWeights {
   const k = { ...DEFAULT_KIND_WEIGHTS, ...settings?.kindWeights };
+  const inheritedWeight = Math.max(0, settings?.inheritedWeight ?? DEFAULT_INHERITED_WEIGHT);
   // The strongest any non-outranking item can be (a top-priority item of the
-  // heaviest kind, or a seed intent); outranking items start just above it.
-  const top = Math.max(k.seedIntent, 2 * k.goal, 2 * k.value, 2 * k.directive, 2 * k.watchWord);
-  return { ...k, outranksBase: top + 0.25 };
+  // heaviest kind — inherited ones boosted — or a seed intent); outranking
+  // items start just above it.
+  const top = Math.max(
+    k.seedIntent,
+    2 * k.directive,
+    2 * Math.max(k.goal, k.watchWord) * Math.max(1, inheritedWeight),
+  );
+  return { ...k, inheritedWeight, outranksBase: top + 0.25 };
 }
 
 /** Weight of one governing item: its kind's weight scaled by priority, or the outranking band. */
-function itemWeight(w: ResolvedWeights, kind: keyof KindWeights, priority: number, outranks: boolean): number {
+function itemWeight(w: ResolvedWeights, kind: keyof KindWeights, priority: number, outranks: boolean, layer: Layer = 'own'): number {
   const p = Math.min(1, Math.max(0, priority));
-  return outranks ? w.outranksBase + 0.5 * p : w[kind] * 2 * p;
+  if (outranks) return w.outranksBase + 0.5 * p;
+  return w[kind] * 2 * p * (layer === 'inherited' ? w.inheritedWeight : 1);
 }
+
+/** Where governing memory comes from, relative to the context recall runs for. */
+type Layer = 'root' | 'inherited' | 'own';
 
 interface MemoryCandidate {
   id: string;
@@ -103,14 +125,17 @@ interface MemoryCandidateWithIntention extends MemoryCandidate {
 
 /** Where an intention term came from: which governing item, in which context. */
 export interface IntentionSource {
-  kind: 'seedIntent' | 'goal' | 'value' | 'directive' | 'watchWord';
-  /** The governing item's text (goal title, value, directive, …). */
+  /** `sign` = one of a goal's signs (`itemId` is the goal). */
+  kind: 'seedIntent' | 'goal' | 'sign' | 'directive' | 'watchWord';
+  /** The governing item's text (goal title, sign, directive, …). */
   text: string;
   /** The goal's / governing item's id (absent for a seed intent). */
   itemId?: string;
   contextId: string;
   /** True when it came from the root context (applies everywhere). */
   root: boolean;
+  /** True when it came from an ancestor context (between the root and this one). */
+  inherited: boolean;
   /** True when the item outranks (sits above every non-outranking item). */
   outranks: boolean;
 }
@@ -141,7 +166,7 @@ export interface RecallExplanation {
     creationRecency: RecallSignal;
     consolidation: RecallSignal;
   };
-  /** Intention terms found in the memory — what goals/values/intent boosted it. */
+  /** Intention terms found in the memory — what goals/signs/intent boosted it. */
   matched: MatchedTerm[];
   /** Whether the memory belongs to the context recall ran for (it gets a boost). */
   sameContext: boolean;
@@ -198,31 +223,37 @@ async function loadContextSignals(
   store: MemoryStore,
   contextId: string,
   dict: IntentionDict,
-  root: boolean,
+  layer: Layer,
   w: ResolvedWeights
 ) {
   const [agent, context, goals] = await Promise.all([
-    store.getAgentProfileForContext(contextId),
+    // An agent's directives are about that agent: they don't flow down.
+    layer === 'inherited' ? null : store.getAgentProfileForContext(contextId),
     store.getContext(contextId),
     store.listGoals({ contextId, status: 'ACTIVE' }),
   ]);
+  const at = { contextId, root: layer === 'root', inherited: layer === 'inherited' };
 
   // Seed intent — the context's guiding intent line (no priority of its own).
   if (context?.seedIntent) {
-    applyTerms(dict, [context.seedIntent], w.seedIntent, { kind: 'seedIntent', contextId, root, outranks: false });
+    applyTerms(dict, [context.seedIntent], w.seedIntent, { kind: 'seedIntent', ...at, outranks: false });
   }
 
-  // Goals — priority is the goal's weight.
+  // Goals — priority is the goal's weight. Its signs (concrete, observable)
+  // count at the same weight: they're how an abstract goal shows up in text.
   for (const goal of goals) {
-    applyTerms(dict, [goal.title], itemWeight(w, 'goal', goal.weight ?? 0.5, goal.outranks ?? false),
-      { kind: 'goal', itemId: goal.id, contextId, root, outranks: goal.outranks ?? false });
+    const outranks = goal.outranks ?? false;
+    const weight = itemWeight(w, 'goal', goal.weight ?? 0.5, outranks, layer);
+    applyTerms(dict, [goal.title], weight, { kind: 'goal', itemId: goal.id, ...at, outranks });
+    const signs = [...(goal.signs?.positive ?? []), ...(goal.signs?.negative ?? [])];
+    applyTerms(dict, signs, weight, { kind: 'sign', itemId: goal.id, ...at, outranks });
   }
 
-  // Values, watch words (the context's) and directives (the agent's).
-  const items = [...(context?.values ?? []), ...(context?.watchWords ?? []), ...(agent?.directives ?? [])];
+  // Watch words (the context's) and directives (the agent's).
+  const items = [...(context?.watchWords ?? []), ...(agent?.directives ?? [])];
   for (const item of items) {
-    applyTerms(dict, [item.text], itemWeight(w, item.kind, item.priority, item.outranks),
-      { kind: item.kind, itemId: item.id, contextId, root, outranks: item.outranks });
+    applyTerms(dict, [item.text], itemWeight(w, item.kind, item.priority, item.outranks, layer),
+      { kind: item.kind, itemId: item.id, ...at, outranks: item.outranks });
   }
 }
 
@@ -235,12 +266,17 @@ async function loadIntentionDict(
   const w = resolveWeights(settings);
   const rootContextId = await store.getRootContextId();
 
+  // Layers, broadest first: the root (applies everywhere), then the ancestors
+  // between it and this context (their governing memory flows down), then the
+  // context's own.
   if (rootContextId) {
-    await loadContextSignals(store, rootContextId, dict, true, w);
+    await loadContextSignals(store, rootContextId, dict, 'root', w);
   }
-
   if (contextId !== rootContextId) {
-    await loadContextSignals(store, contextId, dict, false, w);
+    for (const ancestorId of await loadAncestorIds(store, contextId)) {
+      await loadContextSignals(store, ancestorId, dict, 'inherited', w);
+    }
+    await loadContextSignals(store, contextId, dict, 'own', w);
   }
 
   return dict;

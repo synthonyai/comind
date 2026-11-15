@@ -29,7 +29,6 @@ export async function seedWorld(
     name: world.context.name,
     seedIntent: world.context.seedIntent,
     direction: world.context.direction,
-    values: world.context.values,
     watchWords: world.profile.watchWords,
     constraints: world.context.constraints,
   });
@@ -40,6 +39,11 @@ export async function seedWorld(
     description: world.profile.description,
     directives: world.profile.directives,
   });
+
+  // Values are standing goals: ongoing, with no finish line.
+  for (const v of world.context.values ?? []) {
+    await store.createGoal({ contextId: ctx.id, title: v, standing: true });
+  }
 
   const goalKeyToId: Record<string, string> = {};
   for (const g of world.goals) {

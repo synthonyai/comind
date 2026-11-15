@@ -21,7 +21,8 @@
 // targets through the injected providers and passes the resulting seed down.
 
 import type { EmbeddingProvider, MemoryStore } from '@/lib/comind/providers';
-import type { AttributionType } from '@/lib/comind/types';
+import type { AttributionType, Goal } from '@/lib/comind/types';
+import { loadAncestorIds } from '@/lib/comind/continuity';
 
 /**
  * The capture-time importance blend. All tunable — these are first-guess weights,
@@ -112,7 +113,9 @@ export function seedImportanceScore(params: {
 }
 
 /**
- * Orchestration helper: gather the context's active goals + seed-intent, embed
+ * Orchestration helper: gather the active goals that apply to the context —
+ * its own, its ancestors' and the root's (standing goals included) — plus its
+ * seed-intent, embed
  * them ON THE FLY through the injected embedder, and return the seeded
  * importance for a freshly-captured entry. Not stored anywhere — the embeddings
  * are transient, used only to compute the seed. (A v0.3 optimization could cache
@@ -135,14 +138,22 @@ export async function seedCaptureImportance(params: {
 
   if (!entryEmbedding) return 0.5;
 
-  const [context, goals] = await Promise.all([
+  const [context, rootId, ancestorIds] = await Promise.all([
     store.getContext(contextId),
-    store.listGoals({ contextId, status: 'ACTIVE' }),
+    store.getRootContextId(),
+    loadAncestorIds(store, contextId),
   ]);
+  const scopeIds = [...new Set([...(rootId ? [rootId] : []), ...ancestorIds, contextId])];
+  const goals: Goal[] = (await Promise.all(scopeIds.map(id => store.listGoals({ contextId: id, status: 'ACTIVE' })))).flat();
 
   const targetSpecs: { text: string; weight: number }[] = [];
   if (context?.seedIntent) targetSpecs.push({ text: context.seedIntent, weight: IMPORTANCE.SEED_INTENT_WEIGHT });
-  for (const g of goals) targetSpecs.push({ text: g.title, weight: g.weight ?? 0.5 });
+  // An outranking goal counts as top priority; signs make an abstract goal's
+  // meaning concrete, so they're part of what the goal is "about".
+  for (const g of goals) {
+    const text = [g.title, ...(g.signs?.positive ?? []), ...(g.signs?.negative ?? [])].join('; ');
+    targetSpecs.push({ text, weight: g.outranks ? 1 : g.weight ?? 0.5 });
+  }
 
   if (targetSpecs.length === 0) return 0.5;
 

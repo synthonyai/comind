@@ -69,12 +69,13 @@ export function renderDispatchBanner(label: string, reason?: string): string {
  * not a goal dial.
  */
 function renderLens(lens: DecisionTrace["lens"]): string[] {
-  const focus = lens.activeGoals.length
-    ? lens.activeGoals.map((g) => `▸${g.title} (w${f2(g.weight)})`).join(" · ")
+  const focusGoals = lens.activeGoals.filter((g) => !g.standing);
+  const focus = focusGoals.length
+    ? focusGoals.map((g) => `▸${g.title} (w${f2(g.weight)})`).join(" · ")
     : "—";
   return [
     `  lens · ★ north-star: "${lens.seedIntent ?? "—"}"`,
-    `       · ◇ values: ${lens.values.join(" · ") || "—"}   (core — fixed)`,
+    `       · ◇ values: ${lens.activeGoals.filter((g) => g.standing).map((g) => g.title).join(" · ") || "—"}   (core — fixed)`,
     `       · ▸ focus: ${focus}`,
   ];
 }

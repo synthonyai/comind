@@ -19,8 +19,8 @@ import { f2 } from "@/demo/render";
 export function renderContinuityState(state: ContinuityState): string {
   const { governing, foreground, carryover, promoted } = state;
 
-  const directives = governing.agentProfile?.directives ?? [];
-  const values = governing.context?.values ?? [];
+  const directives = governing.agentProfile?.directives.map((d) => d.text) ?? [];
+  const values = foreground.activeGoals.filter((g) => g.standing).map((g) => g.title);
   const seedIntent = governing.context?.seedIntent ?? null;
 
   const out: string[] = [];
@@ -32,8 +32,9 @@ export function renderContinuityState(state: ContinuityState): string {
   out.push(`            · ◇ values: ${values.join(", ") || "—"}   (core — fixed)`);
 
   // #2 Foreground — where the mind is pointed now.
-  const goals = foreground.activeGoals.length
-    ? foreground.activeGoals.map((g) => `▸ ${g.title} (w ${f2(g.weight)})`).join("   ")
+  const focusGoals = foreground.activeGoals.filter((g) => !g.standing);
+  const goals = focusGoals.length
+    ? focusGoals.map((g) => `▸ ${g.title} (w ${f2(g.weight)})`).join("   ")
     : "—";
   out.push(`  foreground · goals: ${goals}`);
 

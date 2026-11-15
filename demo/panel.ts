@@ -105,10 +105,11 @@ export function createPanel(header: PanelHeader) {
     // -- Standing identity: the persistent core (fixed) above the shifting focus.
     out.push(cell(`★ north-star`, chalk.bold));
     out.push(cell(`  "${lens.seedIntent ?? "—"}"`, chalk.white));
-    out.push(cell(`◇ values: ${lens.values.join(" · ") || "—"}`, chalk.dim));
+    out.push(cell(`◇ values: ${lens.activeGoals.filter((g) => g.standing).map((g) => g.title).join(" · ") || "—"}`, chalk.dim));
     out.push(cell(`  (core — fixed across resets)`, chalk.dim));
-    const focus = lens.activeGoals.length
-      ? lens.activeGoals.map((g) => `▸${g.title} (w${f2(g.weight)})`).join("  ")
+    const focusGoals = lens.activeGoals.filter((g) => !g.standing);
+    const focus = focusGoals.length
+      ? focusGoals.map((g) => `▸${g.title} (w${f2(g.weight)})`).join("  ")
       : "—";
     out.push(cell(`▸ focus: ${focus}`, chalk.cyan));
     out.push(cell(""));
