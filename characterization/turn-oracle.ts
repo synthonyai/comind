@@ -164,6 +164,22 @@ async function main() {
     check("type filter", (await comind.listLinks({ entryId: earlier.id, type: "related" })).length, 1);
   }
 
+  // === 6: an entry from elsewhere keeps its own time and source id ==========
+  {
+    const store = new InMemoryMemoryStore();
+    const embeddings = new StubEmbeddings();
+    const { ctx } = await seed(store, embeddings);
+    const comind = createComind({ userId: "demo", store, embeddings, llm: stub() });
+
+    console.log("[turn] imported entries keep their time…");
+    const when = new Date("2026-03-01T08:15:00Z");
+    const imported = await comind.storeMemory({ contextId: ctx.id, content: "Dreamt of the old house again.", timestamp: when, sourceType: "import", sourceId: "note-42" });
+    check("timestamp is the given time", imported.timestamp.toISOString(), when.toISOString());
+    check("source id is kept", imported.sourceId, "note-42");
+    const now = await comind.storeMemory({ contextId: ctx.id, content: "Written just now." });
+    check("no timestamp → now", Math.abs(now.timestamp.getTime() - Date.now()) < 60_000, true);
+  }
+
   report();
 }
 

@@ -84,6 +84,13 @@ export function createComind(config: CreateComindConfig) {
        * (e.g. `{ toId, type: 'follows' }`). Created after the entry, from it.
        */
       links?: { toId: string; type: string; weight?: number; rationale?: string }[];
+      /**
+       * When it happened, if not now — e.g. a note written earlier and imported
+       * later. Recency is measured from this. Default: now (the store's clock).
+       */
+      timestamp?: Date;
+      /** Where it came from, in the host's terms: the item's id in its source system (e.g. an imported note's id). */
+      sourceId?: string;
     }) => {
       const embedding = await embeddings.embed(params.content);
       const importanceScore =
@@ -105,6 +112,8 @@ export function createComind(config: CreateComindConfig) {
         confidence: params.confidence,
         importanceScore,
         embedding,
+        ...(params.timestamp ? { timestamp: params.timestamp } : {}),
+        ...(params.sourceId ? { sourceId: params.sourceId } : {}),
       });
       for (const link of params.links ?? []) {
         await store.createLink({ fromId: entry.id, attributionType: 'USER_EXPLICIT', ...link });
